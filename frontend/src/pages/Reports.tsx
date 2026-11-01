@@ -1,0 +1,203 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Plus, Pencil, Ban, Trash2 } from 'lucide-react';
+import api from '../api/client';
+import HowTo from '../components/HowTo';
+import Modal, { Field } from '../components/Modal';
+import SearchBox from '../components/SearchBox';
+import { Member, Membership } from '../types';
+import { PASS_STATUS, PAY_METHOD, PLAN_KIND, dateStr, money } from '../lib/format';
+import { SellForm } from './MemberDetail';
+
+type Sale = Membership & { member: { id: string; name: string; phone: string }; bookingCount: number };
+
+interface Report { months: { month: string; revenue: number; count: number }[]; plans: { planName: string; revenue: number; count: number }[]; methods: Record<string, number> }
+
+export default function Reports() {
+  const [tab, setTab] = useState<'chart' | 'sales'>('chart');
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {([['chart', '營收統計'], ['sales', '銷售紀錄']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
+        ))}
+      </div>
+      {tab === 'chart' ? <Revenue /> : <Sales />}
+    </div>
+  );
+}
+
+function Revenue() {
+  const [r, setR] = useState<Report | null>(null);
+  useEffect(() => { api.get('/reports/revenue').then((x) => setR(x.data)); }, []);
+  if (!r) return <div className="text-gray-400 text-sm">載入中…</div>;
+  const total = r.months.reduce((s, m) => s + m.revenue, 0);
+  const max = Math.max(1, ...r.months.map((m) => m.revenue));
+  const methodTotal = Math.max(1, Object.values(r.methods).reduce((a, b) => a + b, 0));
+
+  return (
+    <div className="space-y-4">
+      <div className="page-header">
+        <div><h1 className="text-xl font-bold text-gray-800">營收報表</h1><p className="text-sm text-gray-400">近 12 個月合計 {money(total)}</p></div>
+      </div>
+      <HowTo module="reports" />
+      <div className="card">
+        <h2 className="font-semibold text-gray-700 mb-4">每月營收</h2>
+        <div className="flex items-end gap-1.5 h-48" role="img" aria-label="近 12 個月每月營收長條圖">
+          {r.months.map((m) => (
+            <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full min-w-0 group">
+              <div className="text-[10px] text-gray-500 mb-1 opacity-0 group-hover:opacity-100 whitespace-nowrap">{m.revenue ? `${Math.round(m.revenue / 1000)}k` : ''}</div>
+              <div className="w-full rounded-t-md bg-brand/80 group-hover:bg-brand" style={{ height: `${(m.revenue / max) * 100}%`, minHeight: m.revenue ? 2 : 0 }} title={`${m.month}：${money(m.revenue)}（${m.count} 筆）`} />
+              <div className="text-[10px] text-gray-400 mt-1">{+m.month.slice(5)}月</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-xs text-gray-400 text-left"><th className="py-1 font-normal">月份</th><th className="font-normal text-right">筆數</th><th className="font-normal text-right">營收</th></tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {[...r.months].reverse().filter((m) => m.count).map((m) => (
+                <tr key={m.month}><td className="py-1.5 text-gray-600">{m.month}</td><td className="text-right text-gray-500">{m.count}</td><td className="text-right text-gray-800">{money(m.revenue)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="card">
+          <h2 className="font-semibold text-gray-700 mb-3">各方案</h2>
+          {r.plans.length === 0 ? <p className="text-sm text-gray-400">還沒有銷售紀錄。</p> : (
+            <div className="divide-y divide-gray-50">
+              {r.plans.map((p) => (
+                <div key={p.planName} className="flex justify-between py-2 text-sm"><span className="text-gray-600">{p.planName}<span className="text-xs text-gray-400 ml-2">{p.count} 筆</span></span><span className="text-gray-800">{money(p.revenue)}</span></div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="card">
+          <h2 className="font-semibold text-gray-700 mb-3">付款方式</h2>
+          {Object.keys(r.methods).length === 0 ? <p className="text-sm text-gray-400">還沒有銷售紀錄。</p> : (
+            <div className="space-y-2.5">
+              {Object.entries(r.methods).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+                <div key={k}>
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">{PAY_METHOD[k] ?? k}</span><span className="text-gray-800">{money(v)}<span className="text-xs text-gray-400 ml-1">{Math.round((v / methodTotal) * 100)}%</span></span></div>
+                  <div className="h-1.5 bg-gray-100 rounded-full mt-1"><div className="h-full bg-brand rounded-full" style={{ width: `${(v / methodTotal) * 100}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sales() {
+  const [list, setList] = useState<Sale[] | null>(null);
+  const [f, setF] = useState({ q: '', status: '', kind: '', payMethod: '', from: '', to: '' });
+  const [modal, setModal] = useState<'sell' | Sale | null>(null);
+  const load = () => api.get('/reports/sales', { params: f }).then((r) => setList(r.data));
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [f]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
+  const total = (list ?? []).filter((x) => x.status !== 'CANCELLED').reduce((a, x) => a + x.price, 0);
+
+  async function voidSale(x: Sale) {
+    if (!confirm(`作廢 ${x.member.name} 的「${x.planName}」？作廢後無法再使用，營收也不再計入。`)) return;
+    await api.put(`/memberships/${x.id}`, { status: 'CANCELLED' }); load();
+  }
+  async function remove(x: Sale) {
+    if (!confirm(`刪除 ${x.member.name} 的「${x.planName}」售卡紀錄？（僅限輸入錯誤、尚未使用的紀錄）`)) return;
+    await api.delete(`/memberships/${x.id}`); load();
+  }
+  return (
+    <div className="space-y-4">
+      <div className="page-header">
+        <div><h1 className="text-xl font-bold text-gray-800">銷售紀錄</h1><p className="text-sm text-gray-400">{list ? `${list.length} 筆・實收 ${money(total)}（不含作廢）` : '載入中…'}</p></div>
+        <div><button className="btn-primary flex items-center gap-1" onClick={() => setModal('sell')}><Plus className="w-4 h-4" />新增售卡</button></div>
+      </div>
+      <div className="flex flex-wrap gap-2 items-center">
+        <SearchBox value={f.q} onChange={(v) => set('q', v)} placeholder="搜尋會員姓名、電話、方案" />
+        <select className="input w-auto text-sm" value={f.status} onChange={(e) => set('status', e.target.value)} aria-label="狀態"><option value="">全部狀態</option>{Object.entries(PASS_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <select className="input w-auto text-sm" value={f.kind} onChange={(e) => set('kind', e.target.value)} aria-label="方案類型"><option value="">全部類型</option>{Object.entries(PLAN_KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <select className="input w-auto text-sm" value={f.payMethod} onChange={(e) => set('payMethod', e.target.value)} aria-label="付款方式"><option value="">全部付款方式</option>{Object.entries(PAY_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <span className="flex items-center gap-1 text-sm text-gray-400">
+          <input type="date" className="input w-auto text-sm" value={f.from} onChange={(e) => set('from', e.target.value)} aria-label="售出日期起" />～
+          <input type="date" className="input w-auto text-sm" value={f.to} onChange={(e) => set('to', e.target.value)} aria-label="售出日期迄" />
+        </span>
+        {Object.values(f).some(Boolean) && <button className="text-xs text-brand hover:underline" onClick={() => setF({ q: '', status: '', kind: '', payMethod: '', from: '', to: '' })}>清除篩選</button>}
+      </div>
+      <div className="card p-0 overflow-hidden">
+        {list && list.length === 0 ? <p className="text-sm text-gray-400 p-4">沒有符合條件的銷售紀錄。</p> : (
+          <div className="divide-y divide-gray-50">
+            {(list ?? []).map((x) => (
+              <div key={x.id} className={`flex items-center gap-3 px-4 py-3 ${x.status === 'CANCELLED' ? 'opacity-50' : ''}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-800 truncate">
+                    <Link to={`/members/${x.member.id}`} className="font-medium hover:text-brand">{x.member.name}</Link>
+                    <span className="text-gray-500 ml-2">{x.planName}</span>
+                    <span className="text-[11px] bg-gray-100 text-gray-500 px-1.5 rounded ml-2">{PASS_STATUS[x.status]}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 truncate">{dateStr(x.paidAt)}・{PAY_METHOD[x.payMethod]}・{dateStr(x.startDate)} ~ {dateStr(x.endDate)}{x.note ? `・${x.note}` : ''}</div>
+                </div>
+                <span className={`text-sm font-semibold ${x.status === 'CANCELLED' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{money(x.price)}</span>
+                <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="編輯" title="編輯" onClick={() => setModal(x)}><Pencil className="w-4 h-4 text-gray-400" /></button>
+                {x.status !== 'CANCELLED' && <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="作廢" title="作廢" onClick={() => voidSale(x)}><Ban className="w-4 h-4 text-gray-400" /></button>}
+                {x.bookingCount === 0 && <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="刪除" title="刪除" onClick={() => remove(x)}><Trash2 className="w-4 h-4 text-gray-400" /></button>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {modal === 'sell' && <NewSale onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
+      {modal && modal !== 'sell' && <EditSale x={modal} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
+    </div>
+  );
+}
+
+/** 從銷售紀錄新增：先選會員，再沿用會員頁的售卡表單 */
+function NewSale({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [member, setMember] = useState<Member | null>(null);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<Member[]>([]);
+  useEffect(() => {
+    if (!q.trim()) { setResults([]); return; }
+    const t = setTimeout(() => api.get('/members', { params: { q, status: 'ACTIVE' } }).then((r) => setResults(r.data.slice(0, 8))), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  if (member) return <SellForm memberId={member.id} onClose={onClose} onSaved={onSaved} />;
+  return (
+    <Modal title="新增售卡：選擇會員" onClose={onClose}>
+      <input className="input" autoFocus placeholder="輸入會員姓名或電話" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="divide-y divide-gray-50 mt-2">
+        {results.map((m) => (
+          <button key={m.id} className="w-full text-left py-2 px-1 hover:bg-gray-50 text-sm flex justify-between" onClick={() => setMember(m)}>
+            <span className="font-medium text-gray-800">{m.name}</span><span className="text-gray-400">{m.phone}</span>
+          </button>
+        ))}
+        {q.trim() && results.length === 0 && <p className="text-sm text-gray-400 py-2">找不到會員，請先到「會員」新增。</p>}
+      </div>
+    </Modal>
+  );
+}
+
+function EditSale({ x, onClose, onSaved }: { x: Sale; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({ price: String(x.price), payMethod: x.payMethod, note: x.note ?? '', status: x.status === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE' });
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    await api.put(`/memberships/${x.id}`, { price: +f.price, payMethod: f.payMethod, note: f.note || null, ...(f.status !== (x.status === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE') ? { status: f.status } : {}) });
+    onSaved();
+  }
+  return (
+    <Modal title={`編輯售卡：${x.member.name}・${x.planName}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="實收金額"><input type="number" min={0} className="input" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} required /></Field>
+          <Field label="付款方式"><select className="input" value={f.payMethod} onChange={(e) => setF({ ...f, payMethod: e.target.value })}>{Object.entries(PAY_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+        </div>
+        <Field label="備註"><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        <Field label="狀態" hint="剩餘堂數、到期日、凍結請到會員頁調整"><select className="input" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="ACTIVE">有效</option><option value="CANCELLED">作廢</option></select></Field>
+        <button className="btn-primary w-full">儲存</button>
+      </form>
+    </Modal>
+  );
+}

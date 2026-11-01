@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-warm font-sans text-gray-800;
+  }
+  * {
+    @apply box-border;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl shadow-sm p-4;
+  }
+  /* 頁首：標題＋操作按鈕。空間不夠時按鈕換到下一行，不擠壓標題 */
+  .page-header {
+    @apply flex flex-wrap gap-3;
+  }
+  .page-header > :first-child {
+    flex: 1 1 11rem;
+    min-width: 0;
+  }
+  .page-header > :not(:first-child) {
+    @apply flex-wrap;
+  }
+
+  .btn-primary {
+    @apply whitespace-nowrap bg-brand text-white rounded-xl px-4 py-2 font-medium hover:bg-brand-dark transition-colors;
+  }
+  .btn-secondary {
+    @apply whitespace-nowrap bg-white text-brand border border-brand rounded-xl px-4 py-2 font-medium hover:bg-warm transition-colors;
+  }
+  .btn-danger {
+    @apply bg-red-50 text-red-600 border border-red-200 rounded-xl px-4 py-2 font-medium hover:bg-red-100 transition-colors;
+  }
+  .input {
+    @apply w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand;
+  }
+  .badge-paid {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700;
+  }
+  .badge-pending {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700;
+  }
+  .badge-overdue {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700;
+  }
+  .badge-vacant {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+
+/* 手機：可橫向捲動的表格依內容撐開、不換行，改用左右滑動，避免欄位被壓成一字一行 */
+@media (max-width: 767px) {
+  .overflow-x-auto > table {
+    min-width: max-content;
+  }
+  .overflow-x-auto > table th,
+  .overflow-x-auto > table td {
+    white-space: nowrap;
+  }
+}
+
+/* iPhone 瀏海／底部橫條安全區（index.html 已設 viewport-fit=cover） */
+@layer utilities {
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pt-safe-2 { padding-top: calc(env(safe-area-inset-top) + 0.5rem); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pb-bottom-nav { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}

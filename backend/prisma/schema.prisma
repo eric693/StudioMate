@@ -1,0 +1,311 @@
+// StudioMate：健身房、瑜珈、舞蹈、拳擊教室管理系統（架構沿用 ParkMate）
+// 多租戶：每個教室是一個 ADMIN 帳號，所有營運資料以 userId（教室擁有者）為範圍；員工 STAFF 透過 ownerId 隸屬教室。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+model User {
+  id          String    @id @default(cuid())
+  email       String    @unique // 登入帳號（可為 Email 或自訂帳號名稱）
+  password    String
+  name        String
+  role        UserRole  @default(ADMIN)
+  ownerId     String? // STAFF：所屬教室（管理員）id；ADMIN：null
+  permissions String[]  @default([]) // STAFF 可進入的模組鍵；ADMIN 不受限
+  active      Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  owner User?  @relation("OwnerStaff", fields: [ownerId], references: [id], onDelete: Cascade)
+  staff User[] @relation("OwnerStaff")
+
+  studio      Studio?
+  members     Member[]
+  classTypes  ClassType[]
+  coaches     Coach[]
+  plans       Plan[]
+  memberships Membership[]
+  templates   ScheduleTemplate[]
+  sessions    ClassSession[]
+  bookings    Booking[]
+  reminderLogs ReminderLog[]
+}
+
+// 教室資料與營運規則（每個教室一筆）
+model Studio {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  name                String
+  phone               String?
+  address             String?
+  timezone            String   @default("Asia/Taipei")
+  bookingWindowDays   Int      @default(14) // 會員可預約幾天內的課；也是自動產生課程的天數
+  cancelDeadlineHours Int      @default(12) // 開課前幾小時內取消視為晚取消
+  lateCancelForfeit   Boolean  @default(true) // 晚取消是否扣堂（不退回堂數）
+  waitlistEnabled     Boolean  @default(true)
+  autoAttend          Boolean  @default(true) // 課程結束後，沒點名的預約自動視為出席（不點名的教室適用）；關閉則標為未到
+  remindBeforeHours   Int      @default(3) // 上課前幾小時用 LINE 提醒
+  expiryRemindDays    Int      @default(7) // 方案到期前幾天提醒
+  lowCreditThreshold  Int      @default(2) // 剩餘堂數低於等於多少時提醒
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Member {
+  id                    String       @id @default(cuid())
+  userId                String
+  name                  String
+  phone                 String
+  email                 String?
+  birthday              DateTime?    @db.Date
+  emergencyContact      String?
+  note                  String?
+  status                MemberStatus @default(ACTIVE)
+  lineUserId            String?
+  lineDisplayName       String?
+  lineBindingCode       String?      @unique
+  lineBindingCodeExpiry DateTime?
+  lineBoundAt           DateTime?
+  createdAt             DateTime     @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+  bookings    Booking[]
+
+  @@unique([userId, phone])
+  @@unique([userId, lineUserId])
+  @@index([userId, name])
+}
+
+model ClassType {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  color           String   @default("#6366f1")
+  durationMin     Int      @default(60)
+  defaultCapacity Int      @default(12)
+  creditCost      Int      @default(1) // 上一堂扣幾堂（例如私人課扣 2 堂）
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templates ScheduleTemplate[]
+  sessions  ClassSession[]
+
+  @@unique([userId, name])
+}
+
+model Coach {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  phone     String?
+  color     String   @default("#0ea5e9")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templates ScheduleTemplate[]
+  sessions  ClassSession[]
+
+  @@unique([userId, name])
+}
+
+enum PlanKind {
+  PACK // 堂數卡：N 堂、X 天內有效
+  PERIOD // 期限卡：有效期間內不限堂數
+  DROPIN // 單堂
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  kind         PlanKind
+  credits      Int? // PACK、DROPIN：堂數
+  validDays    Int // 購買後有效天數
+  price        Int // 新台幣
+  classTypeIds String[] @default([]) // 限定可上的課程類型；空陣列＝全部
+  dailyLimit   Int? // PERIOD：每天最多預約幾堂（空＝不限）
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+
+  @@unique([userId, name])
+}
+
+enum MembershipStatus {
+  ACTIVE
+  FROZEN
+  EXPIRED
+  CANCELLED
+}
+
+enum PayMethod {
+  CASH
+  TRANSFER
+  CARD
+  LINEPAY
+  OTHER
+}
+
+// 會員購買的方案（一次購買一筆）。方案內容在購買時複製一份，之後修改方案不影響已售出的
+model Membership {
+  id           String           @id @default(cuid())
+  userId       String
+  memberId     String
+  planId       String
+  planName     String
+  kind         PlanKind
+  creditsTotal Int?
+  creditsLeft  Int?
+  classTypeIds String[]         @default([])
+  dailyLimit   Int?
+  startDate    DateTime         @db.Date
+  endDate      DateTime         @db.Date
+  status       MembershipStatus @default(ACTIVE)
+  frozenFrom   DateTime?        @db.Date
+  frozenUntil  DateTime?        @db.Date
+  price        Int
+  payMethod    PayMethod        @default(CASH)
+  paidAt       DateTime         @default(now())
+  note         String?
+  createdAt    DateTime         @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member   Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  bookings Booking[]
+
+  @@index([userId, memberId, status])
+  @@index([userId, endDate])
+}
+
+// 固定課表：每週幾、幾點、哪位教練上什麼課。系統依此自動產生未來的課程
+model ScheduleTemplate {
+  id          String    @id @default(cuid())
+  userId      String
+  classTypeId String
+  coachId     String?
+  weekday     Int // 0＝週日 … 6＝週六
+  startTime   String // "HH:MM"（教室當地時間）
+  durationMin Int
+  capacity    Int
+  room        String?
+  activeFrom  DateTime  @db.Date
+  activeTo    DateTime? @db.Date
+  createdAt   DateTime  @default(now())
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classType ClassType      @relation(fields: [classTypeId], references: [id], onDelete: Restrict)
+  coach     Coach?         @relation(fields: [coachId], references: [id], onDelete: SetNull)
+  sessions  ClassSession[]
+
+  @@index([userId, weekday])
+}
+
+enum SessionStatus {
+  SCHEDULED
+  CANCELLED
+}
+
+model ClassSession {
+  id          String        @id @default(cuid())
+  userId      String
+  classTypeId String
+  coachId     String?
+  templateId  String?
+  startsAt    DateTime
+  endsAt      DateTime
+  capacity    Int
+  room        String?
+  status      SessionStatus @default(SCHEDULED)
+  cancelReason String?
+  note        String?
+  createdAt   DateTime      @default(now())
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classType ClassType         @relation(fields: [classTypeId], references: [id], onDelete: Restrict)
+  coach     Coach?            @relation(fields: [coachId], references: [id], onDelete: SetNull)
+  template  ScheduleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  bookings  Booking[]
+
+  @@unique([templateId, startsAt]) // 同一固定課表同一時段只會產生一堂，重複執行不會重複建立
+  @@index([userId, startsAt])
+}
+
+enum BookingStatus {
+  BOOKED
+  WAITLIST
+  CANCELLED // 截止前取消：退回堂數
+  LATE_CANCELLED // 截止後取消：依教室規則扣堂
+  ATTENDED
+  NO_SHOW
+}
+
+enum BookingSource {
+  STAFF
+  MEMBER
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  userId         String
+  sessionId      String
+  memberId       String
+  membershipId   String?
+  status         BookingStatus
+  creditsCharged Int           @default(0)
+  source         BookingSource @default(STAFF)
+  bookedAt       DateTime      @default(now())
+  cancelledAt    DateTime?
+  checkedInAt    DateTime?
+  promotedAt     DateTime? // 從候補轉為正取的時間
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session    ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  member     Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  membership Membership?  @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, memberId])
+  @@index([userId, memberId])
+  @@index([sessionId, status])
+}
+
+// 提醒紀錄：避免同一件事重複推播（例如同一堂課只提醒一次）
+model ReminderLog {
+  id        String   @id @default(cuid())
+  userId    String
+  kind      String // CLASS | EXPIRY | LOW_CREDIT | PROMOTED | SESSION_CANCELLED
+  refId     String
+  memberId  String
+  channel   String // LINE | SANDBOX
+  message   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, refId, memberId])
+  @@index([userId, createdAt])
+}
