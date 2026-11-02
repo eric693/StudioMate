@@ -3,12 +3,16 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Trash2, CreditCard, MessageCircle, Snowflake, Sun, SlidersHorizontal, Copy } from 'lucide-react';
 import api from '../api/client';
 import Modal, { Field } from '../components/Modal';
-import { BookingStatus, Member, Membership, Plan } from '../types';
-import { BOOKING_STATUS, PASS_STATUS, PAY_METHOD, PLAN_KIND, dateStr, dateTime, localDay, money, passText } from '../lib/format';
+import { BookingStatus, Coupon, Member, Membership, Plan } from '../types';
+import { BOOKING_STATUS, CARRIER, INVOICE_STATUS, PASS_STATUS, PAY_METHOD, PLAN_KIND, dateStr, dateTime, localDay, money, passText } from '../lib/format';
 import MemberForm from './MemberForm';
 
 interface HistoryRow { id: string; status: BookingStatus; creditsCharged: number; session: { id: string; startsAt: string; classType: { name: string; color: string }; coach: { name: string } | null } }
-type Detail = Member & { memberships: Membership[]; bookings: HistoryRow[]; lineBoundAt?: string | null };
+type Detail = Member & {
+  memberships: Membership[]; bookings: HistoryRow[]; lineBoundAt?: string | null;
+  referredBy: { id: string; name: string } | null; referrals: { id: string; name: string }[]; coupons: Coupon[];
+  suspendedUntil: string | null; violations: { count: number; windowDays: number; limit: number }; termsOutdated: boolean; termsAcceptedAt: string | null;
+};
 
 export default function MemberDetail() {
   const { id } = useParams();
@@ -55,6 +59,13 @@ export default function MemberDetail() {
             <span>累計出席 {attended} 堂</span>
           </div>
           {m.note && <div className="text-sm text-amber-700 bg-amber-50 rounded-lg px-2 py-1 mt-2 whitespace-pre-wrap">{m.note}</div>}
+          <div className="flex flex-wrap gap-1.5 mt-2 text-[11px]">
+            {m.suspendedUntil && <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-full">未到 {m.violations.count} 次，線上預約暫停至 {dateTime(m.suspendedUntil)}</span>}
+            {!m.suspendedUntil && m.violations.count > 0 && <span className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full">近 {m.violations.windowDays} 天未到 {m.violations.count} 次{m.violations.limit ? `（上限 ${m.violations.limit}）` : ''}</span>}
+            {m.termsOutdated && <span className="bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">尚未同意最新版條款</span>}
+            {!m.termsOutdated && m.termsAcceptedAt && <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">已同意條款 {dateStr(m.termsAcceptedAt)}</span>}
+            {m.invoiceCarrierType && <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">發票：{CARRIER[m.invoiceCarrierType]}{m.invoiceCarrierNum ? ` ${m.invoiceCarrierNum}` : ''}{m.invoiceTaxId ? ` ${m.invoiceTaxId}` : ''}</span>}
+          </div>
         </div>
         <div className="flex gap-2">
           <button className="btn-secondary flex items-center gap-1" onClick={() => setModal('edit')}><Pencil className="w-4 h-4" />編輯</button>
@@ -86,6 +97,17 @@ export default function MemberDetail() {
             <p className="text-xs text-gray-500 mt-1">請會員在教室的 LINE 官方帳號輸入這組代碼完成綁定，或到 <span className="font-mono">{location.origin}/m</span> 輸入代碼登入自己預約。24 小時內有效。</p>
           </div>
         )}
+      </div>
+
+      <div className="card text-sm space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-gray-500">推薦碼</span>
+          {m.referralCode ? <span className="font-mono font-semibold text-gray-800">{m.referralCode}</span>
+            : <button className="btn-secondary text-xs py-1" onClick={async () => { await api.post(`/members/${m.id}/referral-code`); load(); }}>產生推薦碼</button>}
+          {m.referredBy && <span className="text-gray-500 sm:ml-4">介紹人：<Link to={`/members/${m.referredBy.id}`} className="text-brand">{m.referredBy.name}</Link></span>}
+        </div>
+        {m.referrals.length > 0 && <div className="text-gray-500">已介紹 {m.referrals.length} 位：{m.referrals.map((r, i) => <span key={r.id}>{i ? '、' : ''}<Link to={`/members/${r.id}`} className="text-brand">{r.name}</Link></span>)}</div>}
+        {m.coupons.length > 0 && <div className="text-gray-500">專屬折價券：{m.coupons.map((c) => <span key={c.id} className={`ml-1 font-mono text-xs px-1.5 py-0.5 rounded ${c.usedCount ? 'bg-gray-100 text-gray-400 line-through' : 'bg-brand/10 text-brand'}`}>{c.code} {money(c.value)}</span>)}</div>}
       </div>
 
       <div className="card">
@@ -158,7 +180,10 @@ export default function MemberDetail() {
           <div className="divide-y divide-gray-50">
             {m.memberships.map((p) => (
               <div key={p.id} className="flex items-center justify-between py-2 text-sm">
-                <div><span className="text-gray-700">{p.planName}</span><span className="text-xs text-gray-400 ml-2">{dateStr(p.paidAt)}・{PAY_METHOD[p.payMethod]}</span></div>
+                <div>
+                  <span className="text-gray-700">{p.planName}</span><span className="text-xs text-gray-400 ml-2">{dateStr(p.paidAt)}・{PAY_METHOD[p.payMethod]}{p.discount ? `・折抵 ${p.discount}` : ''}</span>
+                  {p.invoiceStatus && <div className={`text-xs ${p.invoiceStatus === 'FAILED' ? 'text-red-500' : 'text-gray-400'}`}>發票{INVOICE_STATUS[p.invoiceStatus]}{p.invoiceNo ? ` ${p.invoiceNo}` : ''}{p.invoiceError && p.invoiceStatus === 'FAILED' ? `：${p.invoiceError}` : ''}</div>}
+                </div>
                 <span className={p.status === 'CANCELLED' ? 'line-through text-gray-400' : 'text-gray-700'}>{money(p.price)}</span>
               </div>
             ))}
@@ -176,13 +201,14 @@ export default function MemberDetail() {
 
 export function SellForm({ memberId, onClose, onSaved }: { memberId: string; onClose: () => void; onSaved: () => void }) {
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [f, setF] = useState({ planId: '', startDate: localDay(), price: '', payMethod: 'CASH', note: '' });
+  const [f, setF] = useState({ planId: '', startDate: localDay(), price: '', payMethod: 'CASH', note: '', couponCode: '' });
+  const [couponMsg, setCouponMsg] = useState('');
   useEffect(() => { api.get('/plans').then((r) => { const a = r.data.filter((p: Plan) => p.active); setPlans(a); if (a[0]) setF((x) => ({ ...x, planId: a[0].id, price: String(a[0].price) })); }); }, []);
   const plan = plans.find((p) => p.id === f.planId);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    await api.post('/memberships', { memberId, planId: f.planId, startDate: f.startDate, price: +f.price, payMethod: f.payMethod, note: f.note || undefined });
+    await api.post('/memberships', { memberId, planId: f.planId, startDate: f.startDate, price: +f.price, payMethod: f.payMethod, note: f.note || undefined, couponCode: f.couponCode || undefined });
     onSaved();
   }
   return (
@@ -199,6 +225,17 @@ export function SellForm({ memberId, onClose, onSaved }: { memberId: string; onC
             <Field label="開始日期"><input type="date" className="input" value={f.startDate} onChange={(e) => set('startDate', e.target.value)} required /></Field>
             <Field label="實收金額"><input type="number" min={0} className="input" value={f.price} onChange={(e) => set('price', e.target.value)} required /></Field>
           </div>
+          <Field label="折價券（選填）" hint={couponMsg || undefined}>
+            <div className="flex gap-2">
+              <input className="input font-mono uppercase" value={f.couponCode} onChange={(e) => { set('couponCode', e.target.value.toUpperCase()); setCouponMsg(''); }} placeholder="輸入代碼" />
+              <button type="button" className="btn-secondary whitespace-nowrap" disabled={!f.couponCode} onClick={async () => {
+                try {
+                  const r = await api.post('/memberships/quote', { memberId, planId: f.planId, code: f.couponCode });
+                  setF((x) => ({ ...x, price: String(r.data.amount) })); setCouponMsg(`${r.data.name}：折抵 ${money(r.data.discount)}，實收已更新`);
+                } catch { setCouponMsg(''); }
+              }}>套用</button>
+            </div>
+          </Field>
           <Field label="付款方式"><select className="input" value={f.payMethod} onChange={(e) => set('payMethod', e.target.value)}>{Object.entries(PAY_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <Field label="備註"><input className="input" value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="例如：舊生優惠" /></Field>
           <button className="btn-primary w-full">確認售出</button>

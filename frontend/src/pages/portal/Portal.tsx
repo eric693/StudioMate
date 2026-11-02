@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarDays, ListChecks, Ticket, LogOut, MapPin, Phone, Dumbbell } from 'lucide-react';
+import { CalendarDays, ListChecks, ShoppingBag, UserRound, LogOut, Dumbbell, CheckCircle2 } from 'lucide-react';
 import memberApi, { MEMBER_TOKEN, errorText } from './memberApi';
-import { BOOKING_STATUS, PLAN_KIND, dateTime, hm, localDay, setTimeZone, shortDay, passText } from '../../lib/format';
-import { BookingStatus, Membership } from '../../types';
-
-interface Me {
-  member: { id: string; name: string; phone: string };
-  studio: { name: string; phone: string | null; address: string | null; cancelDeadlineHours: number; lateCancelForfeit: boolean; bookingWindowDays: number; timezone: string };
-  passes: Membership[];
-}
-interface Slot {
-  id: string; startsAt: string; endsAt: string; room: string | null; coach: string | null; capacity: number; spotsLeft: number; waitlist: number;
-  classType: { id: string; name: string; color: string; creditCost: number }; myBooking: { id: string; status: BookingStatus } | null;
-}
-interface MyBooking { id: string; status: BookingStatus; startsAt: string; classType: string; color: string; coach: string | null; room: string | null; creditsCharged: number }
+import { setTimeZone, dateTime } from '../../lib/format';
+import { Me } from './types';
+import ScheduleTab, { BookingsTab } from './ScheduleTab';
+import ShopTab from './ShopTab';
+import MeTab from './MeTab';
+import { passText } from '../../lib/format';
 
 declare global { interface Window { liff?: { init(o: { liffId: string }): Promise<void>; isLoggedIn(): boolean; login(): void; getAccessToken(): string | null } } }
 
+// 掃描櫃檯簽到 QR code 進來（/m?checkin=token）：還沒登入時先記住，登入後再簽到
+const CHECKIN_KEY = 'pendingCheckin';
+function takeUrlParams() {
+  const p = new URLSearchParams(location.search);
+  const checkin = p.get('checkin');
+  if (checkin) { try { sessionStorage.setItem(CHECKIN_KEY, checkin); } catch { /* 無痕模式 */ } }
+  const order = p.get('order');
+  if (checkin || order) history.replaceState(null, '', '/m');
+  return { order };
+}
+
 export default function Portal() {
   const [token, setToken] = useState(() => localStorage.getItem(MEMBER_TOKEN));
+  const [params] = useState(takeUrlParams);
   if (!token) return <MemberLogin onLogin={(t) => { localStorage.setItem(MEMBER_TOKEN, t); setToken(t); }} />;
-  return <MemberHome onLogout={() => { localStorage.removeItem(MEMBER_TOKEN); setToken(null); }} />;
+  return <MemberHome orderId={params.order} onLogout={() => { localStorage.removeItem(MEMBER_TOKEN); setToken(null); }} />;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -76,18 +81,34 @@ function MemberLogin({ onLogin }: { onLogin: (token: string) => void }) {
   );
 }
 
-type Tab = 'schedule' | 'bookings' | 'passes';
+type Tab = 'schedule' | 'bookings' | 'shop' | 'me';
 
-function MemberHome({ onLogout }: { onLogout: () => void }) {
+function MemberHome({ onLogout, orderId }: { onLogout: () => void; orderId: string | null }) {
   const [me, setMe] = useState<Me | null>(null);
-  const [tab, setTab] = useState<Tab>('schedule');
+  const [tab, setTab] = useState<Tab>(orderId ? 'shop' : 'schedule');
   const [toast, setToast] = useState('');
+  const [checkIn, setCheckIn] = useState<{ ok: boolean; text: string } | null>(null);
   const loadMe = useCallback(() => memberApi.get('/me').then((r) => { setTimeZone(r.data.studio.timezone); setMe(r.data); }), []);
   useEffect(() => { loadMe(); }, [loadMe]);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 3000); return () => clearTimeout(t); }, [toast]);
-  if (!me) return <Shell><div className="p-6 text-sm text-gray-400">載入中…</div></Shell>;
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 3500); return () => clearTimeout(t); }, [toast]);
 
-  const TABS: [Tab, string, React.ElementType][] = [['schedule', '課表', CalendarDays], ['bookings', '我的預約', ListChecks], ['passes', '我的方案', Ticket]];
+  // 掃碼簽到
+  useEffect(() => {
+    let token: string | null = null;
+    try { token = sessionStorage.getItem(CHECKIN_KEY); sessionStorage.removeItem(CHECKIN_KEY); } catch { /* 無痕模式 */ }
+    if (!token) return;
+    memberApi.post('/checkin', { token })
+      .then((r) => setCheckIn({ ok: true, text: `${r.data.already ? '已經簽到過了' : '簽到成功'}：${r.data.time} ${r.data.className}` }))
+      .catch((e) => setCheckIn({ ok: false, text: errorText(e) }));
+  }, []);
+
+  if (!me) return <Shell><div className="p-6 text-sm text-gray-400">載入中…</div></Shell>;
+  const notify = (m: string) => { setToast(m); loadMe(); };
+  const TABS: [Tab, string, React.ElementType][] = [
+    ['schedule', '預約', CalendarDays], ['bookings', '我的課', ListChecks],
+    ...(me.features.shop ? [['shop', '購買', ShoppingBag] as [Tab, string, React.ElementType]] : []),
+    ['me', '我的', UserRound],
+  ];
   return (
     <Shell>
       <header className="bg-brand text-white px-5 pt-6 pb-5 pt-safe">
@@ -97,169 +118,59 @@ function MemberHome({ onLogout }: { onLogout: () => void }) {
         </div>
         <div className="text-xl font-bold mt-1">{me.member.name}，你好</div>
         <div className="text-sm opacity-90 mt-1">
-          {me.passes.length ? me.passes.slice(0, 2).map((p) => <div key={p.id}>{p.planName}：{passText(p)}</div>) : '目前沒有有效方案，請洽櫃檯購買'}
+          {me.passes.length ? me.passes.slice(0, 2).map((p) => <div key={p.id}>{p.planName}：{passText(p)}</div>)
+            : me.features.shop ? <button className="underline" onClick={() => setTab('shop')}>目前沒有有效方案，前往購買</button> : '目前沒有有效方案，請洽櫃檯購買'}
         </div>
+        {me.suspendedUntil && <div className="mt-2 text-xs bg-white/20 rounded-lg px-2 py-1">因近期未到課，線上預約暫停至 {dateTime(me.suspendedUntil)}，如需預約請聯絡教室</div>}
       </header>
       <main className="px-4 py-4 pb-24">
-        {tab === 'schedule' && <ScheduleTab me={me} onChange={(m) => { setToast(m); loadMe(); }} />}
-        {tab === 'bookings' && <BookingsTab me={me} onChange={(m) => { setToast(m); loadMe(); }} />}
-        {tab === 'passes' && <PassesTab me={me} />}
+        {tab === 'schedule' && <ScheduleTab me={me} onChange={notify} />}
+        {tab === 'bookings' && <BookingsTab me={me} onChange={notify} />}
+        {tab === 'shop' && <ShopTab me={me} orderId={orderId} onChange={notify} />}
+        {tab === 'me' && <MeTab me={me} onChange={notify} />}
       </main>
-      {toast && <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-4 py-2 rounded-full shadow-lg max-w-[90vw] text-center z-50">{toast}</div>}
+      {toast && <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-4 py-2 rounded-2xl shadow-lg w-max max-w-[90vw] text-center z-50">{toast}</div>}
       <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 pb-safe z-40">
-        <div className="max-w-md mx-auto grid grid-cols-3">
+        <div className="max-w-md mx-auto flex">
           {TABS.map(([k, label, Icon]) => (
-            <button key={k} onClick={() => setTab(k)} className={`flex flex-col items-center gap-0.5 py-2 text-xs ${tab === k ? 'text-brand' : 'text-gray-400'}`}>
+            <button key={k} onClick={() => setTab(k)} className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs ${tab === k ? 'text-brand' : 'text-gray-400'}`}>
               <Icon className="w-5 h-5" />{label}
             </button>
           ))}
         </div>
       </nav>
+      {me.terms && <TermsGate terms={me.terms} onAccepted={loadMe} />}
+      {checkIn && !me.terms && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-6" onClick={() => setCheckIn(null)}>
+          <div className="bg-white rounded-2xl p-6 text-center max-w-sm w-full">
+            <CheckCircle2 className={`w-14 h-14 mx-auto ${checkIn.ok ? 'text-green-500' : 'text-gray-300'}`} />
+            <div className="text-lg font-semibold text-gray-800 mt-3">{checkIn.ok ? '簽到完成' : '無法簽到'}</div>
+            <p className="text-sm text-gray-500 mt-1">{checkIn.text}</p>
+            <button className="btn-primary w-full mt-5">好</button>
+          </div>
+        </div>
+      )}
     </Shell>
   );
 }
 
-function ScheduleTab({ me, onChange }: { me: Me; onChange: (msg: string) => void }) {
-  const [slots, setSlots] = useState<Slot[] | null>(null);
-  const [day, setDay] = useState(localDay());
-  const [busy, setBusy] = useState('');
-  const load = useCallback(() => memberApi.get('/schedule').then((r) => setSlots(r.data)), []);
-  useEffect(() => { load(); }, [load]);
-  if (!slots) return <p className="text-sm text-gray-400">載入中…</p>;
-
-  const days = Array.from(new Set([localDay(), ...slots.map((s) => localDay(s.startsAt))])).sort();
-  const list = slots.filter((s) => localDay(s.startsAt) === day);
-
-  async function book(s: Slot) {
-    setBusy(s.id);
-    try {
-      const r = await memberApi.post('/bookings', { sessionId: s.id });
-      onChange(r.data.status === 'WAITLIST' ? `已排入候補，有名額時會自動遞補並通知你` : `預約成功：${shortDay(localDay(s.startsAt))} ${hm(s.startsAt)} ${s.classType.name}`);
-      await load();
-    } catch (e) { onChange(errorText(e)); }
-    setBusy('');
-  }
-  async function cancel(s: Slot) {
-    const late = new Date(s.startsAt).getTime() - Date.now() < me.studio.cancelDeadlineHours * 3600e3;
-    const warn = s.myBooking!.status === 'BOOKED' && late && me.studio.lateCancelForfeit ? `\n\n已超過開課前 ${me.studio.cancelDeadlineHours} 小時，取消將不退回堂數。` : '';
-    if (!confirm(`取消 ${hm(s.startsAt)} ${s.classType.name}？${warn}`)) return;
-    setBusy(s.id);
-    try {
-      const r = await memberApi.post(`/bookings/${s.myBooking!.id}/cancel`);
-      onChange(r.data.refunded ? '已取消，堂數已退回' : r.data.late ? '已取消（晚取消，堂數不退回）' : '已取消');
-      await load();
-    } catch (e) { onChange(errorText(e)); }
-    setBusy('');
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-2 overflow-x-auto -mx-4 px-4 pb-1 no-scrollbar">
-        {days.map((d) => {
-          const n = slots.filter((s) => localDay(s.startsAt) === d).length;
-          const [, m, dd] = d.split('-');
-          return (
-            <button key={d} onClick={() => setDay(d)} className={`flex-shrink-0 w-14 py-2 rounded-xl text-center ${day === d ? 'bg-brand text-white' : 'bg-white text-gray-600'}`}>
-              <div className="text-[11px] opacity-80">{shortDay(d).replace(/^.*（(.)）$/, '$1')}</div>
-              <div className="font-semibold">{+m}/{+dd}</div>
-              <div className={`text-[10px] ${day === d ? 'opacity-80' : 'text-gray-400'}`}>{n ? `${n} 堂` : '—'}</div>
-            </button>
-          );
-        })}
-      </div>
-      {list.length === 0 ? <div className="card text-sm text-gray-400 text-center py-8">這天沒有可預約的課程</div> : list.map((s) => {
-        const mine = s.myBooking;
-        return (
-          <div key={s.id} className="card flex items-center gap-3">
-            <span className="w-1.5 self-stretch rounded-full" style={{ background: s.classType.color }} />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2"><span className="font-mono text-gray-700">{hm(s.startsAt)}</span><span className="font-medium text-gray-800 truncate">{s.classType.name}</span></div>
-              <div className="text-xs text-gray-400 mt-0.5 truncate">{s.coach ?? '教練待定'}{s.room ? `・${s.room}` : ''}{s.classType.creditCost !== 1 ? `・扣 ${s.classType.creditCost} 堂` : ''}</div>
-              <div className={`text-xs mt-0.5 ${s.spotsLeft ? 'text-gray-500' : 'text-brand'}`}>{s.spotsLeft ? `剩 ${s.spotsLeft} 位` : `額滿${s.waitlist ? `・候補 ${s.waitlist} 人` : ''}`}</div>
-            </div>
-            {mine ? (
-              <div className="flex flex-col items-end gap-1">
-                <span className={`text-xs px-2 py-0.5 rounded-full ${BOOKING_STATUS[mine.status].cls}`}>{BOOKING_STATUS[mine.status].label}</span>
-                <button className="text-xs text-gray-400 underline" disabled={busy === s.id} onClick={() => cancel(s)}>取消</button>
-              </div>
-            ) : (
-              <button className={s.spotsLeft ? 'btn-primary text-sm px-4' : 'btn-secondary text-sm px-3'} disabled={busy === s.id} onClick={() => book(s)}>
-                {busy === s.id ? '…' : s.spotsLeft ? '預約' : '候補'}
-              </button>
-            )}
-          </div>
-        );
-      })}
-      <p className="text-xs text-gray-400 text-center pt-2">可預約 {me.studio.bookingWindowDays} 天內的課程・開課前 {me.studio.cancelDeadlineHours} 小時可免費取消</p>
-    </div>
-  );
-}
-
-function BookingsTab({ me, onChange }: { me: Me; onChange: (msg: string) => void }) {
-  const [scope, setScope] = useState<'upcoming' | 'history'>('upcoming');
-  const [list, setList] = useState<MyBooking[] | null>(null);
-  const load = useCallback(() => memberApi.get('/bookings', { params: { scope } }).then((r) => setList(r.data)), [scope]);
-  useEffect(() => { setList(null); load(); }, [load]);
-
-  async function cancel(b: MyBooking) {
-    const late = new Date(b.startsAt).getTime() - Date.now() < me.studio.cancelDeadlineHours * 3600e3;
-    const warn = b.status === 'BOOKED' && late && me.studio.lateCancelForfeit ? `\n\n已超過開課前 ${me.studio.cancelDeadlineHours} 小時，取消將不退回堂數。` : '';
-    if (!confirm(`取消 ${dateTime(b.startsAt)} ${b.classType}？${warn}`)) return;
-    try {
-      const r = await memberApi.post(`/bookings/${b.id}/cancel`);
-      onChange(r.data.refunded ? '已取消，堂數已退回' : r.data.late ? '已取消（晚取消，堂數不退回）' : '已取消');
-      load();
-    } catch (e) { onChange(errorText(e)); }
+/** 會員條款：第一次使用或條款改版時，需同意才能繼續 */
+function TermsGate({ terms, onAccepted }: { terms: { text: string; version: number }; onAccepted: () => void }) {
+  const [agree, setAgree] = useState(false);
+  const [err, setErr] = useState('');
+  async function accept() {
+    try { await memberApi.post('/terms', { version: terms.version }); onAccepted(); } catch (e) { setErr(errorText(e)); }
   }
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 bg-gray-100 rounded-xl p-1 text-sm">
-        {(['upcoming', 'history'] as const).map((k) => (
-          <button key={k} onClick={() => setScope(k)} className={`py-1.5 rounded-lg ${scope === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{k === 'upcoming' ? '即將上課' : '過去紀錄'}</button>
-        ))}
-      </div>
-      {!list ? <p className="text-sm text-gray-400">載入中…</p> : list.length === 0 ? <div className="card text-sm text-gray-400 text-center py-8">{scope === 'upcoming' ? '還沒有預約，到「課表」選一堂課吧' : '還沒有上課紀錄'}</div> : list.map((b) => (
-        <div key={b.id} className="card flex items-center gap-3">
-          <span className="w-1.5 self-stretch rounded-full" style={{ background: b.color }} />
-          <div className="flex-1 min-w-0">
-            <div className="font-medium text-gray-800 truncate">{b.classType}</div>
-            <div className="text-xs text-gray-500">{dateTime(b.startsAt)}</div>
-            <div className="text-xs text-gray-400 truncate">{b.coach ?? '教練待定'}{b.room ? `・${b.room}` : ''}</div>
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <span className={`text-xs px-2 py-0.5 rounded-full ${BOOKING_STATUS[b.status].cls}`}>{BOOKING_STATUS[b.status].label}</span>
-            {scope === 'upcoming' && <button className="text-xs text-gray-400 underline" onClick={() => cancel(b)}>取消</button>}
-          </div>
+    <div className="fixed inset-0 z-[80] bg-black/50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl max-h-[90dvh] flex flex-col" role="dialog" aria-label="會員條款">
+        <div className="px-5 py-4 border-b border-gray-100"><h2 className="font-semibold text-gray-800">會員條款</h2><p className="text-xs text-gray-400">請閱讀並同意後繼續使用預約與購買功能</p></div>
+        <div className="px-5 py-4 overflow-y-auto text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{terms.text}</div>
+        <div className="px-5 py-4 border-t border-gray-100 space-y-3 pb-safe">
+          <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />我已閱讀並同意以上條款</label>
+          {err && <p className="text-sm text-red-500">{err}</p>}
+          <button className="btn-primary w-full py-3" disabled={!agree} onClick={accept}>同意並繼續</button>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function PassesTab({ me }: { me: Me }) {
-  return (
-    <div className="space-y-3">
-      {me.passes.length === 0 ? <div className="card text-sm text-gray-400 text-center py-8">目前沒有有效方案，請洽櫃檯購買</div> : me.passes.map((p) => (
-        <div key={p.id} className="card">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-800">{p.planName}</span>
-            <span className="text-xs bg-gray-100 text-gray-500 px-1.5 rounded">{PLAN_KIND[p.kind]}</span>
-            {p.status === 'FROZEN' && <span className="text-xs bg-sky-50 text-sky-600 px-1.5 rounded">凍結中</span>}
-          </div>
-          <div className="mt-2">
-            {p.kind === 'PERIOD' ? <span className="text-lg font-bold text-brand">不限堂數</span>
-              : <><span className="text-3xl font-bold text-brand">{p.creditsLeft}</span><span className="text-sm text-gray-400"> / {p.creditsTotal} 堂</span></>}
-          </div>
-          {p.kind !== 'PERIOD' && p.creditsTotal ? (
-            <div className="h-1.5 bg-gray-100 rounded-full mt-2"><div className="h-full bg-brand rounded-full" style={{ width: `${((p.creditsLeft ?? 0) / p.creditsTotal) * 100}%` }} /></div>
-          ) : null}
-          <div className="text-xs text-gray-400 mt-2">{p.startDate.slice(0, 10)} ~ {p.endDate.slice(0, 10)}{p.status === 'FROZEN' && p.frozenUntil ? `・凍結至 ${p.frozenUntil.slice(0, 10)}` : ''}</div>
-        </div>
-      ))}
-      <div className="card text-sm text-gray-600 space-y-1.5">
-        <div className="font-medium text-gray-700">{me.studio.name}</div>
-        {me.studio.phone && <a href={`tel:${me.studio.phone}`} className="flex items-center gap-2 text-brand"><Phone className="w-4 h-4" />{me.studio.phone}</a>}
-        {me.studio.address && <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-gray-400" />{me.studio.address}</div>}
       </div>
     </div>
   );

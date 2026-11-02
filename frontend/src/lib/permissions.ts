@@ -3,8 +3,10 @@ import { User } from '../types';
 /** 前端路由 → 模組鍵（對應後端 middleware/permissions.ts） */
 const ROUTE_MODULES: [RegExp, string][] = [
   [/^\/$/, 'dashboard'],
-  [/^\/(schedule|templates)/, 'schedule'],
-  [/^\/members/, 'members'],
+  [/^\/(schedule|templates|checkin-display)/, 'schedule'],
+  [/^\/(members|orders)/, 'members'],
+  [/^\/marketing/, 'marketing'],
+  [/^\/rentals/, 'rentals'],
   [/^\/catalog/, 'catalog'],
   [/^\/reports/, 'reports'],
   [/^\/settings/, 'settings'],
@@ -31,6 +33,6 @@ export function canRoute(user: User | null, path: string) {
 
 /** 員工登入後第一個可以進的頁面 */
 export function firstAllowedRoute(user: User | null) {
-  const order = ['/', '/schedule', '/members', '/catalog', '/reports', '/settings'];
+  const order = ['/', '/schedule', '/members', '/orders', '/catalog', '/marketing', '/rentals', '/reports', '/settings'];
   return order.find((p) => canRoute(user, p)) ?? '/accounts';
 }

@@ -13,6 +13,10 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Accounts from './pages/Accounts';
 import Portal from './pages/portal/Portal';
+import Orders from './pages/Orders';
+import Marketing from './pages/Marketing';
+import Rentals from './pages/Rentals';
+import CheckInDisplay from './pages/CheckInDisplay';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -46,13 +50,17 @@ export default function App() {
           <AuthProvider>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/checkin-display" element={<PrivateRoute>{gated(<CheckInDisplay />)}</PrivateRoute>} />
               <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
                 <Route index element={gated(<Dashboard />)} />
                 <Route path="schedule" element={gated(<Schedule />)} />
                 <Route path="templates" element={gated(<Templates />)} />
                 <Route path="members" element={gated(<Members />)} />
                 <Route path="members/:id" element={gated(<MemberDetail />)} />
+                <Route path="orders" element={gated(<Orders />)} />
                 <Route path="catalog" element={gated(<Catalog />)} />
+                <Route path="marketing" element={gated(<Marketing />)} />
+                <Route path="rentals" element={gated(<Rentals />)} />
                 <Route path="reports" element={gated(<Reports />)} />
                 <Route path="settings" element={gated(<Settings />)} />
                 <Route path="accounts" element={<Accounts />} />

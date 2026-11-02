@@ -8,7 +8,9 @@ import { AuthRequest } from '../middleware/auth';
 import { badRequest, notFound } from '../utils/http';
 import { addDays, dateOnly, localDate, localToUtc } from '../utils/time';
 import { getStudio } from '../services/studioService';
-import { freezeMembership, sellMembership, unfreezeMembership } from '../services/membershipService';
+import { freezeMembership, unfreezeMembership } from '../services/membershipService';
+import { completeSale, ensureReferralCode, voidMembershipInvoice } from '../services/commerceService';
+import { suspendedUntil } from '../services/bookingService';
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日期格式須為 YYYY-MM-DD');
 
@@ -20,7 +22,23 @@ const memberSchema = z.object({
   emergencyContact: z.string().trim().max(80).optional().nullable(),
   note: z.string().max(1000).optional().nullable(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  referrerCode: z.string().trim().max(20).optional().nullable(), // 介紹人的推薦碼
+  referredById: z.string().optional().nullable(),
+  invoiceCarrierType: z.enum(['MOBILE', 'CITIZEN', 'DONATE', 'COMPANY']).optional().nullable().or(z.literal('').transform(() => null)),
+  invoiceCarrierNum: z.string().trim().max(64).optional().nullable(),
+  invoiceTaxId: z.string().trim().regex(/^\d{8}$/, '統一編號須為 8 碼數字').optional().nullable().or(z.literal('').transform(() => null)),
+  invoiceTitle: z.string().trim().max(60).optional().nullable(),
 });
+
+/** 推薦碼或介紹人 id → 介紹人 id（必須是同教室的其他會員） */
+async function resolveReferrer(userId: string, selfId: string | null, d: { referrerCode?: string | null; referredById?: string | null }) {
+  if (d.referrerCode === undefined && d.referredById === undefined) return undefined;
+  if (!d.referrerCode && !d.referredById) return null;
+  const ref = await prisma.member.findFirst({ where: { userId, ...(d.referredById ? { id: d.referredById } : { referralCode: d.referrerCode!.toUpperCase() }) } });
+  if (!ref) throw badRequest('找不到這個推薦碼的會員');
+  if (ref.id === selfId) throw badRequest('不能填自己的推薦碼');
+  return ref.id;
+}
 
 // 生日字串轉成資料庫的日期；保留呼叫端原本的型別（新增時欄位必填、修改時可部分更新）
 function toData<T extends { birthday?: string | null }>(d: T): Omit<T, 'birthday'> & { birthday?: Date | null } {
@@ -43,7 +61,7 @@ export async function listMembers(req: AuthRequest, res: Response) {
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
-  res.json(members.map(({ memberships, lineBindingCode: _c, ...m }) => ({
+  res.json(members.map(({ memberships, lineBindingCode: _c, calendarToken: _t, ...m }) => ({
     ...m,
     lineBound: Boolean(m.lineUserId),
     activePasses: memberships.map((x) => ({ id: x.id, planName: x.planName, kind: x.kind, creditsLeft: x.creditsLeft, endDate: x.endDate, status: x.status })),
@@ -59,14 +77,28 @@ export async function getMember(req: AuthRequest, res: Response) {
     },
   });
   if (!member) throw notFound('找不到會員');
-  const { lineBindingCode: _c, ...rest } = member;
-  res.json({ ...rest, lineBound: Boolean(member.lineUserId) });
+  const studio = await getStudio(req.userId!);
+  const { lineBindingCode: _c, calendarToken: _t, ...rest } = member;
+  const since = new Date(Date.now() - studio.noShowWindowDays * 86400e3);
+  const [referredBy, referrals, coupons, suspended, noShows] = await Promise.all([
+    member.referredById ? prisma.member.findUnique({ where: { id: member.referredById }, select: { id: true, name: true } }) : null,
+    prisma.member.findMany({ where: { referredById: member.id }, select: { id: true, name: true } }),
+    prisma.coupon.findMany({ where: { memberId: member.id }, orderBy: { createdAt: 'desc' } }),
+    suspendedUntil(prisma, studio, member.id),
+    prisma.booking.count({ where: { memberId: member.id, status: { in: studio.lateCancelCountsAsNoShow ? ['NO_SHOW', 'LATE_CANCELLED'] : ['NO_SHOW'] }, session: { startsAt: { gte: since } } } }),
+  ]);
+  res.json({
+    ...rest, lineBound: Boolean(member.lineUserId), referredBy, referrals, coupons, suspendedUntil: suspended,
+    violations: { count: noShows, windowDays: studio.noShowWindowDays, limit: studio.noShowLimit },
+    termsOutdated: Boolean(studio.terms) && studio.termsVersion > member.termsAcceptedVersion,
+  });
 }
 
 export async function createMember(req: AuthRequest, res: Response) {
-  const data = memberSchema.parse(req.body);
+  const { referrerCode, referredById, ...data } = memberSchema.parse(req.body);
+  const ref = await resolveReferrer(req.userId!, null, { referrerCode, referredById });
   try {
-    res.status(201).json(await prisma.member.create({ data: { ...toData(data), userId: req.userId! } }));
+    res.status(201).json(await prisma.member.create({ data: { ...toData(data), referredById: ref ?? null, userId: req.userId! } }));
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw badRequest('這支電話已經有會員使用');
     throw e;
@@ -77,7 +109,9 @@ export async function updateMember(req: AuthRequest, res: Response) {
   const own = await prisma.member.findFirst({ where: { id: req.params.id, userId: req.userId! } });
   if (!own) throw notFound('找不到會員');
   try {
-    res.json(await prisma.member.update({ where: { id: own.id }, data: toData(memberSchema.partial().parse(req.body)) }));
+    const { referrerCode, referredById, ...data } = memberSchema.partial().parse(req.body);
+    const ref = await resolveReferrer(req.userId!, own.id, { referrerCode, referredById });
+    res.json(await prisma.member.update({ where: { id: own.id }, data: { ...toData(data), ...(ref !== undefined ? { referredById: ref } : {}) } }));
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw badRequest('這支電話已經有會員使用');
     throw e;
@@ -126,10 +160,18 @@ const sellSchema = z.object({
   price: z.coerce.number().int().min(0).max(10_000_000).optional(),
   payMethod: z.enum(['CASH', 'TRANSFER', 'CARD', 'LINEPAY', 'OTHER']).optional(),
   note: z.string().max(500).optional(),
+  couponCode: z.string().trim().max(30).optional().nullable(),
 });
 
 export async function sell(req: AuthRequest, res: Response) {
-  res.status(201).json(await sellMembership(req.userId!, sellSchema.parse(req.body)));
+  res.status(201).json(await completeSale(req.userId!, sellSchema.parse(req.body)));
+}
+
+/** 產生（或取得）會員推薦碼 */
+export async function referralCode(req: AuthRequest, res: Response) {
+  const own = await prisma.member.findFirst({ where: { id: req.params.id, userId: req.userId! } });
+  if (!own) throw notFound('找不到會員');
+  res.json({ code: await ensureReferralCode(own.id) });
 }
 
 export async function freeze(req: AuthRequest, res: Response) {
@@ -197,6 +239,8 @@ export async function updateMembership(req: AuthRequest, res: Response) {
     payMethod: z.enum(['CASH', 'TRANSFER', 'CARD', 'LINEPAY', 'OTHER']).optional(),
   }).parse(req.body);
   if (d.creditsLeft !== undefined && own.kind === 'PERIOD') throw badRequest('期限卡沒有堂數');
+  // 作廢方案時一併作廢已開立的發票（發票作廢失敗就不作廢方案，避免帳務不一致）
+  if (d.status === 'CANCELLED' && own.status !== 'CANCELLED' && own.invoiceStatus === 'ISSUED') await voidMembershipInvoice(req.userId!, own.id, '方案作廢');
   res.json(await prisma.membership.update({
     where: { id: own.id },
     data: { ...d, ...(d.endDate ? { endDate: dateOnly(d.endDate) } : {}) },

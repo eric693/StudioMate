@@ -22,6 +22,9 @@ async function ownClassType(userId: string, id: string) {
   if (!ct) throw badRequest('找不到課程類型');
   return ct;
 }
+async function ownBranch(userId: string, id?: string | null) {
+  if (id && !(await prisma.branch.findFirst({ where: { id, userId } }))) throw badRequest('找不到分店');
+}
 async function ownCoach(userId: string, id?: string | null) {
   if (!id) return;
   if (!(await prisma.coach.findFirst({ where: { id, userId } }))) throw badRequest('找不到教練');
@@ -37,13 +40,15 @@ const templateSchema = z.object({
   durationMin: z.coerce.number().int().min(10).max(600).optional(),
   capacity: z.coerce.number().int().min(1).max(500).optional(),
   room: z.string().trim().max(40).nullable().optional(),
+  branchId: z.string().nullable().optional(),
+  liveUrl: z.string().trim().url('直播連結格式不正確').max(500).nullable().optional().or(z.literal('').transform(() => null)),
   activeFrom: day.optional(),
   activeTo: day.nullable().optional(),
 });
 
 export async function listTemplates(req: AuthRequest, res: Response) {
   res.json(await prisma.scheduleTemplate.findMany({
-    where: { userId: req.userId! }, include: { classType: true, coach: true }, orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
+    where: { userId: req.userId! }, include: { classType: true, coach: true, branch: { select: { id: true, name: true } } }, orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
   }));
 }
 
@@ -51,11 +56,13 @@ export async function createTemplate(req: AuthRequest, res: Response) {
   const d = templateSchema.parse(req.body);
   const ct = await ownClassType(req.userId!, d.classTypeId);
   await ownCoach(req.userId!, d.coachId);
+  await ownBranch(req.userId!, d.branchId);
   const studio = await getStudio(req.userId!);
   const t = await prisma.scheduleTemplate.create({
     data: {
       userId: req.userId!, classTypeId: ct.id, coachId: d.coachId ?? null, weekday: d.weekday, startTime: d.startTime,
       durationMin: d.durationMin ?? ct.durationMin, capacity: d.capacity ?? ct.defaultCapacity, room: d.room ?? null,
+      branchId: d.branchId ?? null, liveUrl: d.liveUrl ?? null,
       activeFrom: dateOnly(d.activeFrom ?? localDate(new Date(), studio.timezone)), activeTo: d.activeTo ? dateOnly(d.activeTo) : null,
     },
   });
@@ -69,6 +76,7 @@ export async function updateTemplate(req: AuthRequest, res: Response) {
   const d = templateSchema.partial().parse(req.body);
   if (d.classTypeId) await ownClassType(req.userId!, d.classTypeId);
   await ownCoach(req.userId!, d.coachId);
+  await ownBranch(req.userId!, d.branchId);
   const t = await prisma.scheduleTemplate.update({
     where: { id: own.id },
     data: {
@@ -106,8 +114,9 @@ export async function listSessions(req: AuthRequest, res: Response) {
     where: {
       userId: req.userId!, startsAt: { gte: localToUtc(from, '00:00', studio.timezone), lt: localToUtc(addDays(to, 1), '00:00', studio.timezone) },
       NOT: { status: 'CANCELLED', cancelReason: DELETED },
+      ...(req.query.branchId ? { branchId: String(req.query.branchId) } : {}),
     },
-    include: { classType: true, coach: true, bookings: { select: { status: true } } },
+    include: { classType: true, coach: true, branch: { select: { id: true, name: true } }, bookings: { select: { status: true } } },
     orderBy: { startsAt: 'asc' },
   });
   res.json(sessions.map(({ bookings, ...s }) => ({
@@ -122,7 +131,7 @@ export async function getSession(req: AuthRequest, res: Response) {
   const s = await prisma.classSession.findFirst({
     where: { id: req.params.id, userId: req.userId! },
     include: {
-      classType: true, coach: true,
+      classType: true, coach: true, branch: { select: { id: true, name: true } },
       bookings: { include: { member: { select: { id: true, name: true, phone: true } }, membership: { select: { planName: true, kind: true, creditsLeft: true } } }, orderBy: { bookedAt: 'asc' } },
     },
   });
@@ -139,6 +148,8 @@ const sessionSchema = z.object({
   capacity: z.coerce.number().int().min(1).max(500).optional(),
   room: z.string().trim().max(40).nullable().optional(),
   note: z.string().max(500).nullable().optional(),
+  branchId: z.string().nullable().optional(),
+  liveUrl: z.string().trim().url('直播連結格式不正確').max(500).nullable().optional().or(z.literal('').transform(() => null)),
 });
 
 /** 新增單堂課（不屬於固定課表，例如工作坊、加開課） */
@@ -146,6 +157,7 @@ export async function createSession(req: AuthRequest, res: Response) {
   const d = sessionSchema.parse(req.body);
   const ct = await ownClassType(req.userId!, d.classTypeId);
   await ownCoach(req.userId!, d.coachId);
+  await ownBranch(req.userId!, d.branchId);
   const studio = await getStudio(req.userId!);
   const startsAt = localToUtc(d.date, d.startTime, studio.timezone);
   const s = await prisma.classSession.create({
@@ -153,6 +165,7 @@ export async function createSession(req: AuthRequest, res: Response) {
       userId: req.userId!, classTypeId: ct.id, coachId: d.coachId ?? null, startsAt,
       endsAt: new Date(startsAt.getTime() + (d.durationMin ?? ct.durationMin) * 60e3),
       capacity: d.capacity ?? ct.defaultCapacity, room: d.room ?? null, note: d.note ?? null,
+      branchId: d.branchId ?? null, liveUrl: d.liveUrl ?? null,
     },
   });
   res.status(201).json(s);
@@ -175,8 +188,11 @@ export async function updateSession(req: AuthRequest, res: Response) {
     room: z.string().trim().max(40).nullable().optional(),
     note: z.string().max(500).nullable().optional(),
     capacity: z.coerce.number().int().min(1).max(500).optional(),
+    branchId: z.string().nullable().optional(),
+    liveUrl: z.string().trim().url('直播連結格式不正確').max(500).nullable().optional().or(z.literal('').transform(() => null)),
   }).parse(req.body);
   await ownCoach(req.userId!, d.coachId);
+  await ownBranch(req.userId!, d.branchId);
   if (d.classTypeId) await ownClassType(req.userId!, d.classTypeId);
   const { capacity, date, startTime, durationMin, ...rest } = d;
   const data: Prisma.ClassSessionUncheckedUpdateInput = { ...rest };

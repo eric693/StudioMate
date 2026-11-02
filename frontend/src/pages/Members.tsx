@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, MessageCircle } from 'lucide-react';
+import { Plus, Search, MessageCircle, Download, Upload } from 'lucide-react';
 import api from '../api/client';
 import HowTo from '../components/HowTo';
 import { Member } from '../types';
-import { addDays, localDay, passText } from '../lib/format';
+import { addDays, downloadCsv, localDay, passText } from '../lib/format';
+import ImportMembers from './ImportMembers';
 import MemberForm from './MemberForm';
 
 export default function Members() {
@@ -12,6 +13,7 @@ export default function Members() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE' | ''>('ACTIVE');
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [pass, setPass] = useState<'' | 'HAS' | 'NONE' | 'EXPIRING' | 'LOW' | 'FROZEN'>('');
   const [line, setLine] = useState<'' | 'BOUND' | 'UNBOUND'>('');
   const [rule, setRule] = useState({ expiryRemindDays: 7, lowCreditThreshold: 2 });
@@ -37,7 +39,11 @@ export default function Members() {
     <div className="space-y-4">
       <div className="page-header">
         <div><h1 className="text-xl font-bold text-gray-800">會員</h1><p className="text-sm text-gray-400">{shown.length === list.length ? `共 ${list.length} 位` : `符合 ${shown.length} / ${list.length} 位`}</p></div>
-        <div><button className="btn-primary flex items-center gap-1" onClick={() => setAdding(true)}><Plus className="w-4 h-4" />新增會員</button></div>
+        <div className="flex gap-2">
+          <button className="btn-secondary flex items-center gap-1" onClick={() => setImporting(true)}><Upload className="w-4 h-4" /><span className="hidden sm:inline">匯入</span></button>
+          <button className="btn-secondary flex items-center gap-1" onClick={() => downloadCsv(api, '/members/export', {}, 'members.csv')}><Download className="w-4 h-4" /><span className="hidden sm:inline">匯出</span></button>
+          <button className="btn-primary flex items-center gap-1" onClick={() => setAdding(true)}><Plus className="w-4 h-4" />新增會員</button>
+        </div>
       </div>
       <HowTo module="members" />
       <div className="flex flex-wrap gap-2">
@@ -79,6 +85,7 @@ export default function Members() {
           </div>
         )}
       </div>
+      {importing && <ImportMembers onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
       {adding && <MemberForm onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
     </div>
   );

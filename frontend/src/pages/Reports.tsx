@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Pencil, Ban, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Ban, Trash2, Download, Receipt, ChevronDown, ChevronRight } from 'lucide-react';
 import api from '../api/client';
 import HowTo from '../components/HowTo';
 import Modal, { Field } from '../components/Modal';
 import SearchBox from '../components/SearchBox';
 import { Member, Membership } from '../types';
-import { PASS_STATUS, PAY_METHOD, PLAN_KIND, dateStr, money } from '../lib/format';
+import { INVOICE_STATUS, PASS_STATUS, PAY_METHOD, PLAN_KIND, addDays, dateStr, dateTime, downloadCsv, localDay, money } from '../lib/format';
 import { SellForm } from './MemberDetail';
 
 type Sale = Membership & { member: { id: string; name: string; phone: string }; bookingCount: number };
@@ -14,15 +14,17 @@ type Sale = Membership & { member: { id: string; name: string; phone: string }; 
 interface Report { months: { month: string; revenue: number; count: number }[]; plans: { planName: string; revenue: number; count: number }[]; methods: Record<string, number> }
 
 export default function Reports() {
-  const [tab, setTab] = useState<'chart' | 'sales'>('chart');
+  const [tab, setTab] = useState<'chart' | 'sales' | 'coach'>('chart');
   return (
     <div className="space-y-4">
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {([['chart', '營收統計'], ['sales', '銷售紀錄']] as const).map(([k, l]) => (
+        {([['chart', '營收統計'], ['sales', '銷售紀錄'], ['coach', '教練薪資']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
         ))}
       </div>
-      {tab === 'chart' ? <Revenue /> : <Sales />}
+      {tab === 'chart' && <Revenue />}
+      {tab === 'sales' && <Sales />}
+      {tab === 'coach' && <CoachPay />}
     </div>
   );
 }
@@ -102,8 +104,17 @@ function Sales() {
   const total = (list ?? []).filter((x) => x.status !== 'CANCELLED').reduce((a, x) => a + x.price, 0);
 
   async function voidSale(x: Sale) {
-    if (!confirm(`作廢 ${x.member.name} 的「${x.planName}」？作廢後無法再使用，營收也不再計入。`)) return;
+    if (!confirm(`作廢 ${x.member.name} 的「${x.planName}」？作廢後無法再使用，營收也不再計入。${x.invoiceStatus === 'ISSUED' ? '\n已開立的發票會一併作廢。' : ''}`)) return;
     await api.put(`/memberships/${x.id}`, { status: 'CANCELLED' }); load();
+  }
+  async function issue(x: Sale) {
+    if (!confirm(`開立 ${money(x.price)} 的電子發票給 ${x.member.name}？`)) return;
+    await api.post(`/memberships/${x.id}/invoice`); load();
+  }
+  async function voidInvoice(x: Sale) {
+    const reason = prompt('作廢原因（20 字內）：', '開立錯誤');
+    if (reason === null) return;
+    await api.post(`/memberships/${x.id}/invoice/void`, { reason }); load();
   }
   async function remove(x: Sale) {
     if (!confirm(`刪除 ${x.member.name} 的「${x.planName}」售卡紀錄？（僅限輸入錯誤、尚未使用的紀錄）`)) return;
@@ -113,7 +124,10 @@ function Sales() {
     <div className="space-y-4">
       <div className="page-header">
         <div><h1 className="text-xl font-bold text-gray-800">銷售紀錄</h1><p className="text-sm text-gray-400">{list ? `${list.length} 筆・實收 ${money(total)}（不含作廢）` : '載入中…'}</p></div>
-        <div><button className="btn-primary flex items-center gap-1" onClick={() => setModal('sell')}><Plus className="w-4 h-4" />新增售卡</button></div>
+        <div className="flex gap-2">
+          <button className="btn-secondary flex items-center gap-1" onClick={() => downloadCsv(api, '/reports/export/sales', { from: f.from, to: f.to }, 'sales.csv')}><Download className="w-4 h-4" />匯出 CSV</button>
+          <button className="btn-primary flex items-center gap-1" onClick={() => setModal('sell')}><Plus className="w-4 h-4" />新增售卡</button>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2 items-center">
         <SearchBox value={f.q} onChange={(v) => set('q', v)} placeholder="搜尋會員姓名、電話、方案" />
@@ -137,10 +151,17 @@ function Sales() {
                     <span className="text-gray-500 ml-2">{x.planName}</span>
                     <span className="text-[11px] bg-gray-100 text-gray-500 px-1.5 rounded ml-2">{PASS_STATUS[x.status]}</span>
                   </div>
-                  <div className="text-xs text-gray-400 truncate">{dateStr(x.paidAt)}・{PAY_METHOD[x.payMethod]}・{dateStr(x.startDate)} ~ {dateStr(x.endDate)}{x.note ? `・${x.note}` : ''}</div>
+                  <div className="text-xs text-gray-400 truncate">{dateStr(x.paidAt)}・{PAY_METHOD[x.payMethod]}・{dateStr(x.startDate)} ~ {dateStr(x.endDate)}{x.discount ? `・折抵 ${x.discount}` : ''}{x.note ? `・${x.note}` : ''}</div>
+                  {x.invoiceStatus && (
+                    <div className={`text-xs ${x.invoiceStatus === 'FAILED' ? 'text-red-500' : x.invoiceStatus === 'VOID' ? 'text-gray-400' : 'text-green-600'}`}>
+                      發票{INVOICE_STATUS[x.invoiceStatus]}{x.invoiceNo ? ` ${x.invoiceNo}` : ''}{x.invoiceStatus === 'FAILED' && x.invoiceError ? `：${x.invoiceError}` : ''}
+                    </div>
+                  )}
                 </div>
                 <span className={`text-sm font-semibold ${x.status === 'CANCELLED' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{money(x.price)}</span>
                 <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="編輯" title="編輯" onClick={() => setModal(x)}><Pencil className="w-4 h-4 text-gray-400" /></button>
+                {x.status !== 'CANCELLED' && x.price > 0 && x.invoiceStatus !== 'ISSUED' && <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="開立發票" title="開立發票" onClick={() => issue(x)}><Receipt className="w-4 h-4 text-gray-400" /></button>}
+                {x.invoiceStatus === 'ISSUED' && x.status !== 'CANCELLED' && <button className="p-1.5 rounded-lg hover:bg-gray-50 text-[11px] text-gray-400" title="作廢發票" onClick={() => voidInvoice(x)}>作廢發票</button>}
                 {x.status !== 'CANCELLED' && <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="作廢" title="作廢" onClick={() => voidSale(x)}><Ban className="w-4 h-4 text-gray-400" /></button>}
                 {x.bookingCount === 0 && <button className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="刪除" title="刪除" onClick={() => remove(x)}><Trash2 className="w-4 h-4 text-gray-400" /></button>}
               </div>
@@ -199,5 +220,68 @@ function EditSale({ x, onClose, onSaved }: { x: Sale; onClose: () => void; onSav
         <button className="btn-primary w-full">儲存</button>
       </form>
     </Modal>
+  );
+}
+
+interface CoachRow {
+  coachId: string; coachName: string; classes: number; heads: number; fillRate: number | null; value: number; pay: number;
+  rule: { payPerClass: number; payPerHead: number; headThreshold: number; revenueShare: number };
+  detail: { sessionId: string; startsAt: string; className: string; heads: number; capacity: number; value: number; pay: number }[];
+}
+
+function CoachPay() {
+  const [month, setMonth] = useState(localDay().slice(0, 7));
+  const [r, setR] = useState<{ rows: CoachRow[]; totals: { classes: number; value: number; pay: number } } | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [att, setAtt] = useState({ from: addDays(localDay(), -30), to: localDay() });
+  useEffect(() => { setR(null); api.get('/reports/coach-pay', { params: { month } }).then((x) => setR(x.data)); }, [month]);
+  const rows = (r?.rows ?? []).filter((x) => !q || x.coachName.includes(q));
+  return (
+    <div className="space-y-4">
+      <div className="page-header">
+        <div><h1 className="text-xl font-bold text-gray-800">教練薪資</h1><p className="text-sm text-gray-400">{r ? `${r.totals.classes} 堂・課程產值 ${money(r.totals.value)}・薪資合計 ${money(r.totals.pay)}` : '載入中…'}</p></div>
+        <div className="flex gap-2 items-center">
+          <input type="month" className="input w-auto" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} aria-label="月份" />
+          <button className="btn-secondary flex items-center gap-1" onClick={() => downloadCsv(api, '/reports/export/coach-pay', { month }, `coach-pay-${month}.csv`)}><Download className="w-4 h-4" />匯出</button>
+        </div>
+      </div>
+      <SearchBox value={q} onChange={setQ} placeholder="搜尋教練" />
+      <div className="card p-0 overflow-hidden">
+        {r && rows.length === 0 ? <p className="text-sm text-gray-400 p-4">這個月沒有已結束的課程。</p> : (
+          <div className="divide-y divide-gray-50">
+            {rows.map((c) => (
+              <div key={c.coachId}>
+                <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50" onClick={() => setOpen(open === c.coachId ? null : c.coachId)}>
+                  {open === c.coachId ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-800">{c.coachName}</div>
+                    <div className="text-xs text-gray-400">{c.classes} 堂・{c.heads} 人次{c.fillRate !== null ? `・平均滿班 ${c.fillRate}%` : ''}・產值 {money(c.value)}</div>
+                  </div>
+                  <span className="text-sm font-semibold text-gray-800">{money(c.pay)}</span>
+                </button>
+                {open === c.coachId && (
+                  <div className="px-4 pb-3 pl-11">
+                    <p className="text-xs text-gray-400 mb-2">規則：每堂 {c.rule.payPerClass}{c.rule.payPerHead ? `、超過 ${c.rule.headThreshold} 人每人 +${c.rule.payPerHead}` : ''}{c.rule.revenueShare ? `、產值抽成 ${c.rule.revenueShare}%` : ''}（到「方案與課程 → 教練」修改）</p>
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-gray-400 text-left"><th className="font-normal py-1">時間</th><th className="font-normal">課程</th><th className="font-normal text-right">出席</th><th className="font-normal text-right">產值</th><th className="font-normal text-right">薪資</th></tr></thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {c.detail.map((d) => <tr key={d.sessionId}><td className="py-1 text-gray-600">{dateTime(d.startsAt)}</td><td className="text-gray-600">{d.className}</td><td className="text-right text-gray-500">{d.heads}/{d.capacity}</td><td className="text-right text-gray-500">{d.value}</td><td className="text-right text-gray-800">{d.pay}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="card flex flex-wrap items-end gap-2">
+        <div className="flex-1 min-w-[12rem]"><div className="font-semibold text-gray-700">上課紀錄匯出</div><p className="text-xs text-gray-400">每一筆預約、出席、未到與扣堂，可用 Excel 開啟</p></div>
+        <input type="date" className="input w-auto text-sm" value={att.from} onChange={(e) => setAtt({ ...att, from: e.target.value })} aria-label="起" />
+        <input type="date" className="input w-auto text-sm" value={att.to} onChange={(e) => setAtt({ ...att, to: e.target.value })} aria-label="迄" />
+        <button className="btn-secondary flex items-center gap-1" onClick={() => downloadCsv(api, '/reports/export/attendance', att, 'attendance.csv')}><Download className="w-4 h-4" />匯出 CSV</button>
+      </div>
+    </div>
   );
 }

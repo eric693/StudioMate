@@ -27,11 +27,18 @@ async function main() {
   });
   const userId = user.id;
   // 依外鍵順序清空舊資料
-  for (const m of ['booking', 'reminderLog', 'classSession', 'membership', 'scheduleTemplate', 'plan', 'member', 'classType', 'coach', 'studio'] as const) {
+  for (const m of ['order', 'couponRedemption', 'coupon', 'campaign', 'roomBooking', 'room', 'coachAvailability', 'booking', 'reminderLog', 'classSession',
+    'membership', 'scheduleTemplate', 'plan', 'member', 'classType', 'coach', 'branch', 'studio'] as const) {
     await (prisma[m] as unknown as { deleteMany(a: object): Promise<unknown> }).deleteMany({ where: { userId } });
   }
   await prisma.studio.create({
-    data: { userId, name: '晨光瑜珈拳擊工作室', phone: '02-2345-6789', address: '台北市大安區復興南路一段 100 號 3 樓', timezone: TZ },
+    data: {
+      userId, name: '晨光瑜珈拳擊工作室', phone: '02-2345-6789', address: '台北市大安區復興南路一段 100 號 3 樓', timezone: TZ,
+      onlinePayEnabled: true, transferEnabled: true, bankInfo: '台灣銀行（004）\n帳號 123-456-789012\n戶名 晨光瑜珈拳擊工作室',
+      referralRewardAmount: 300, noShowLimit: 3, noShowWindowDays: 30, noShowSuspendDays: 7,
+      terms: '一、預約與取消\n1. 開課前 12 小時以前取消，堂數全額退回；之後取消視為晚取消，扣除堂數。\n2. 未到課且未取消者扣除堂數；30 天內未到 3 次，暫停線上預約 7 天。\n\n二、方案效期\n方案須於效期內使用完畢，出國或受傷可申請凍結。\n\n三、健康聲明\n本人確認身體狀況適合參加課程，如有傷病將事先告知教練。',
+      termsVersion: 1,
+    },
   });
 
   const types = Object.fromEntries(await Promise.all(([
@@ -39,16 +46,24 @@ async function main() {
     ['拳擊有氧', '#d9573b', 60, 16, 1], ['街舞入門', '#e8a33d', 60, 18, 1],
   ] as const).map(async ([name, color, durationMin, defaultCapacity, creditCost]) =>
     [name, await prisma.classType.create({ data: { userId, name, color, durationMin, defaultCapacity, creditCost } })])));
+  await prisma.classType.create({ data: { userId, name: '私人教練課', color: '#c45c9a', durationMin: 60, defaultCapacity: 1, creditCost: 2, isPrivate: true } });
 
   const coaches = Object.fromEntries(await Promise.all(([
     ['Mia', '#7c5cc4'], ['阿傑', '#d9573b'], ['小芸', '#4f9d69'], ['Ken', '#e8a33d'],
-  ] as const).map(async ([name, color]) => [name, await prisma.coach.create({ data: { userId, name, color } })])));
+  ] as const).map(async ([name, color], i) => [name, await prisma.coach.create({
+    data: { userId, name, color, payPerClass: [900, 800, 800, 700][i], payPerHead: 50, headThreshold: 8, revenueShare: i === 0 ? 10 : 0 },
+  })])));
+  // 私人課可預約時段：阿傑週一三五下午、Mia 週二四早上
+  await prisma.coachAvailability.createMany({ data: [
+    ...[1, 3, 5].map((weekday) => ({ userId, coachId: coaches['阿傑'].id, weekday, startTime: '14:00', endTime: '18:00' })),
+    ...[2, 4].map((weekday) => ({ userId, coachId: coaches['Mia'].id, weekday, startTime: '09:00', endTime: '12:00' })),
+  ] });
 
   const plans = await Promise.all([
-    { name: '單堂體驗', kind: 'DROPIN' as const, credits: 1, validDays: 30, price: 450 },
-    { name: '10 堂卡', kind: 'PACK' as const, credits: 10, validDays: 90, price: 3800 },
-    { name: '20 堂卡', kind: 'PACK' as const, credits: 20, validDays: 180, price: 6800 },
-    { name: '月卡（不限堂數）', kind: 'PERIOD' as const, credits: null, validDays: 30, price: 3200, dailyLimit: 2 },
+    { name: '單堂體驗', kind: 'DROPIN' as const, credits: 1, validDays: 30, price: 450, onlineSale: true, trialOnly: true, description: '第一次來上課的朋友限定' },
+    { name: '10 堂卡', kind: 'PACK' as const, credits: 10, validDays: 90, price: 3800, onlineSale: true, description: '適合每週 1～2 堂，可上所有團體課' },
+    { name: '20 堂卡', kind: 'PACK' as const, credits: 20, validDays: 180, price: 6800, onlineSale: true },
+    { name: '月卡（不限堂數）', kind: 'PERIOD' as const, credits: null, validDays: 30, price: 3200, dailyLimit: 2, onlineSale: true },
     { name: '拳擊 8 堂卡', kind: 'PACK' as const, credits: 8, validDays: 60, price: 2800, classTypeIds: [types['拳擊有氧'].id] },
   ].map((p) => prisma.plan.create({ data: { userId, ...p } })));
 
@@ -157,6 +172,26 @@ async function main() {
       await bookSession({ userId, sessionId: s.id, memberId: m.id, source: rand() < 0.6 ? 'MEMBER' : 'STAFF' }).catch(() => undefined);
     }
   }
+
+  // 行銷、訂單、場地示範資料
+  await prisma.coupon.createMany({ data: [
+    { userId, code: 'OPEN500', name: '週年慶折 500', discountType: 'AMOUNT', value: 500, minAmount: 3000, maxUses: 50, usedCount: 6 },
+    { userId, code: 'BACK90', name: '老學員回流九折', discountType: 'PERCENT', value: 10 },
+    { userId, code: 'NEW100', name: '新朋友首購折 100', discountType: 'AMOUNT', value: 100, newMemberOnly: true },
+  ] });
+  await prisma.member.update({ where: { id: members[0].id }, data: { referralCode: 'RDEMO1' } });
+  await prisma.member.updateMany({ where: { id: { in: [members[13].id, members[17].id] } }, data: { referredById: members[0].id } });
+  await prisma.order.create({ data: {
+    userId, memberId: members[5].id, planId: plans[1].id, tradeNo: `SMDEMO${Date.now().toString(36).toUpperCase()}`.slice(0, 20), method: 'TRANSFER',
+    originalAmount: 3800, amount: 3800, transferLast5: '83021', transferAt: new Date(),
+  } });
+  const roomA = await prisma.room.create({ data: { userId, name: 'A 教室', hourlyRate: 600, capacity: 15, note: '含音響、瑜珈墊 15 張' } });
+  await prisma.room.create({ data: { userId, name: 'B 教室', hourlyRate: 800, capacity: 20 } });
+  const rentDay = addDays(today, 5);
+  await prisma.roomBooking.create({ data: {
+    userId, roomId: roomA.id, renterName: '林老師（頌缽工作坊）', renterPhone: '0933-222-111', startsAt: localToUtc(rentDay, '14:00', TZ), endsAt: localToUtc(rentDay, '17:00', TZ),
+    price: 1800, paid: true, payMethod: 'TRANSFER',
+  } });
 
   const counts = await Promise.all([prisma.member.count({ where: { userId } }), prisma.classSession.count({ where: { userId } }), prisma.booking.count({ where: { userId } })]);
   console.log(`demo 教室已建立：帳號 ${account}，會員 ${counts[0]}、課程 ${counts[1]}、預約 ${counts[2]}`);
