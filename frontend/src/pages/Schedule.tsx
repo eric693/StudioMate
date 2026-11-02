@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Plus, Check, UserX, Undo2, XCircle, Search, Pencil, Trash2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Plus, Check, UserX, Undo2, XCircle, Search, Pencil, Trash2, QrCode, UserRound, Video } from 'lucide-react';
 import api from '../api/client';
 import HowTo from '../components/HowTo';
 import SearchBox, { matches } from '../components/SearchBox';
 import Modal, { Field } from '../components/Modal';
-import { ClassType, Coach, Member, RosterBooking, Session } from '../types';
+import { Branch, ClassType, Coach, Member, RosterBooking, Session } from '../types';
 import { addDays, BOOKING_STATUS, dateTime, hm, localDay, passText, shortDay, weekStart, WEEKDAYS } from '../lib/format';
 
 type Editing = { session?: SessionDetail } | null;
@@ -23,9 +23,13 @@ export default function Schedule() {
   const [typeId, setTypeId] = useState('');
   const [coachId, setCoachId] = useState('');
   const [status, setStatus] = useState<'' | 'OPEN' | 'FULL' | 'CANCELLED'>('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState('');
+  const [privateOpen, setPrivateOpen] = useState(false);
   useEffect(() => {
     api.get('/class-types').then((r) => setTypes(r.data));
     api.get('/coaches').then((r) => setCoaches(r.data));
+    api.get('/branches').then((r) => setBranches(r.data.filter((b: Branch) => b.active)));
   }, []);
 
   const load = useCallback(() => {
@@ -38,6 +42,7 @@ export default function Schedule() {
     matches(q, s.classType.name, s.coach?.name, s.room, s.note)
     && (!typeId || s.classType.id === typeId)
     && (!coachId || s.coach?.id === coachId)
+    && (!branchId || s.branch?.id === branchId)
     && (!status || (status === 'CANCELLED' ? s.status === 'CANCELLED'
       : s.status === 'SCHEDULED' && (status === 'FULL' ? s.booked >= s.capacity : s.booked < s.capacity))));
   const filtered = shown.length !== sessions.length;
@@ -65,7 +70,9 @@ export default function Schedule() {
           <button className="btn-secondary px-2" onClick={() => shiftWeek(-1)} aria-label="上一週"><ChevronLeft className="w-4 h-4" /></button>
           <button className="btn-secondary" onClick={() => { setStart(weekStart(today)); setMobileDay(today); }}>本週</button>
           <button className="btn-secondary px-2" onClick={() => shiftWeek(1)} aria-label="下一週"><ChevronRight className="w-4 h-4" /></button>
-          <button className="btn-primary flex items-center gap-1" onClick={() => setEditing({})}><Plus className="w-4 h-4" />加開一堂課</button>
+          <Link to="/checkin-display" className="btn-secondary px-2 flex items-center" title="簽到 QR code" aria-label="簽到 QR code"><QrCode className="w-4 h-4" /></Link>
+          {types.some((t) => t.isPrivate && t.active) && <button className="btn-secondary flex items-center gap-1" onClick={() => setPrivateOpen(true)}><UserRound className="w-4 h-4" /><span className="hidden sm:inline">私人課</span></button>}
+          <button className="btn-primary flex items-center gap-1" onClick={() => setEditing({})}><Plus className="w-4 h-4" /><span className="hidden sm:inline">加開一堂課</span><span className="sm:hidden">加開</span></button>
         </div>
       </div>
       <HowTo module="schedule" />
@@ -77,11 +84,14 @@ export default function Schedule() {
         <select className="input w-auto text-sm" value={coachId} onChange={(e) => setCoachId(e.target.value)} aria-label="教練">
           <option value="">全部教練</option>{coaches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        {branches.length > 0 && <select className="input w-auto text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)} aria-label="分店">
+          <option value="">全部分店</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>}
         <select className="input w-auto text-sm" value={status} onChange={(e) => setStatus(e.target.value as typeof status)} aria-label="狀態">
           <option value="">全部狀態</option><option value="OPEN">還有名額</option><option value="FULL">額滿</option><option value="CANCELLED">已取消</option>
         </select>
         {filtered && <span className="text-xs text-gray-400">本週符合 {shown.length} / {sessions.length} 堂
-          <button className="ml-2 text-brand hover:underline" onClick={() => { setQ(''); setTypeId(''); setCoachId(''); setStatus(''); }}>清除篩選</button></span>}
+          <button className="ml-2 text-brand hover:underline" onClick={() => { setQ(''); setTypeId(''); setCoachId(''); setStatus(''); setBranchId(''); }}>清除篩選</button></span>}
       </div>
 
       {/* 手機：一次看一天 */}
@@ -115,6 +125,7 @@ export default function Schedule() {
       </div>
 
       {openId && <SessionPanel id={openId} onClose={() => open(null)} onChanged={load} onEdit={(session) => setEditing({ session })} />}
+      {privateOpen && <PrivateBook types={types.filter((t) => t.isPrivate && t.active)} coaches={coaches.filter((c) => c.active)} onClose={() => setPrivateOpen(false)} onDone={() => { setPrivateOpen(false); load(); }} />}
       {editing && <SessionForm session={editing.session} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); if (editing.session) { setOpenId(null); setTimeout(() => setOpenId(editing.session!.id)); } }} />}
     </div>
@@ -134,7 +145,11 @@ function SessionCard({ s, onClick, compact }: { s: Session; onClick: () => void;
           : <span className={`text-xs font-semibold ${full ? 'text-brand' : 'text-gray-600'}`}>{s.booked}/{s.capacity}</span>}
       </div>
       <div className={`text-sm font-medium truncate ${cancelled ? 'line-through text-gray-400' : 'text-gray-800'}`}>{s.classType.name}</div>
-      <div className="text-xs text-gray-400 truncate">{s.coach?.name ?? '未指定'}{s.waitlist ? `・候補 ${s.waitlist}` : ''}</div>
+      <div className="text-xs text-gray-400 truncate flex items-center gap-1">
+        {s.isPrivate && <UserRound className="w-3 h-3 text-purple-500 flex-shrink-0" aria-label="私人課" />}
+        {s.liveUrl && <Video className="w-3 h-3 text-sky-500 flex-shrink-0" aria-label="直播" />}
+        <span className="truncate">{s.coach?.name ?? '未指定'}{s.branch ? `・${s.branch.name}` : ''}{s.waitlist ? `・候補 ${s.waitlist}` : ''}</span>
+      </div>
     </button>
   );
 }
@@ -178,6 +193,8 @@ function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose:
           {s.room && <span>教室：{s.room}</span>}
           <span>正取 {seated}/{s.capacity}{waitlist.length ? `・候補 ${waitlist.length}` : ''}</span>
           {s.classType.creditCost !== 1 && <span>每堂扣 {s.classType.creditCost} 堂</span>}
+          {s.branch && <span>分店：{s.branch.name}</span>}
+          {s.liveUrl && <a href={s.liveUrl} target="_blank" rel="noreferrer" className="text-sky-600 underline">直播連結</a>}
           {s.note && <span>備註：{s.note}</span>}
           {!cancelled && (
             <span className="ml-auto flex gap-1">
@@ -291,10 +308,13 @@ function SessionForm({ session, onClose, onSaved }: { session?: SessionDetail; o
     date: session ? localDay(session.startsAt) : localDay(), startTime: session ? hm(session.startsAt) : '19:00',
     durationMin: session ? String(Math.round((new Date(session.endsAt).getTime() - new Date(session.startsAt).getTime()) / 60e3)) : '',
     capacity: session ? String(session.capacity) : '', room: session?.room ?? '', note: session?.note ?? '',
+    branchId: session?.branch?.id ?? '', liveUrl: session?.liveUrl ?? '',
   }));
+  const [branches, setBranches] = useState<Branch[]>([]);
   useEffect(() => {
     api.get('/class-types').then((r) => { const a = r.data.filter((t: ClassType) => t.active || t.id === session?.classType.id); setTypes(a); if (!session && a[0]) setF((x) => ({ ...x, classTypeId: a[0].id })); });
     api.get('/coaches').then((r) => setCoaches(r.data.filter((c: Coach) => c.active || c.id === session?.coach?.id)));
+    api.get('/branches').then((r) => setBranches(r.data.filter((b: Branch) => b.active || b.id === session?.branch?.id)));
   }, [session]);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const ct = types.find((t) => t.id === f.classTypeId);
@@ -302,6 +322,7 @@ function SessionForm({ session, onClose, onSaved }: { session?: SessionDetail; o
     e.preventDefault();
     const body = {
       classTypeId: f.classTypeId, coachId: f.coachId || null, room: f.room || null, note: f.note || null,
+      branchId: f.branchId || null, liveUrl: f.liveUrl || null,
       capacity: f.capacity ? +f.capacity : undefined, durationMin: f.durationMin ? +f.durationMin : undefined,
       ...(booked ? {} : { date: f.date, startTime: f.startTime }),
     };
@@ -325,10 +346,75 @@ function SessionForm({ session, onClose, onSaved }: { session?: SessionDetail; o
             <Field label="名額" hint={session ? '加大名額會自動遞補候補' : '空白＝用課程類型的預設值'}><input type="number" min={1} className="input" value={f.capacity} placeholder={String(ct?.defaultCapacity ?? '')} onChange={(e) => set('capacity', e.target.value)} /></Field>
             <Field label="教室"><input className="input" value={f.room} onChange={(e) => set('room', e.target.value)} placeholder="例如 A 教室" /></Field>
           </div>
+          {branches.length > 0 && <Field label="分店"><select className="input" value={f.branchId} onChange={(e) => set('branchId', e.target.value)}><option value="">不指定</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>}
+          {(ct?.isOnline || f.liveUrl) && <Field label="直播連結" hint="只有已預約的會員，在開課前 15 分鐘起看得到"><input className="input" type="url" value={f.liveUrl} onChange={(e) => set('liveUrl', e.target.value)} placeholder="https://meet.google.com/..." /></Field>}
           <Field label="備註"><input className="input" value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="例如：工作坊、限定進階學員" /></Field>
           <button className="btn-primary w-full">{session ? '儲存' : '建立'}</button>
         </form>
       )}
+    </Modal>
+  );
+}
+
+/** 櫃檯幫會員預約私人課：選會員、課程、教練、日期，從空檔中挑時間 */
+function PrivateBook({ types, coaches, onClose, onDone }: { types: ClassType[]; coaches: Coach[]; onClose: () => void; onDone: () => void }) {
+  const [member, setMember] = useState<Member | null>(null);
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState<Member[]>([]);
+  const [f, setF] = useState({ classTypeId: types[0]?.id ?? '', coachId: '', date: localDay() });
+  const [slots, setSlots] = useState<string[] | null>(null);
+  const [withSlots, setWithSlots] = useState<Coach[]>([]);
+  useEffect(() => { api.get('/private/options').then((r) => { setWithSlots(r.data.coaches); if (r.data.coaches[0]) setF((x) => ({ ...x, coachId: x.coachId || r.data.coaches[0].id })); }); }, []);
+  useEffect(() => {
+    if (!q.trim()) { setFound([]); return; }
+    const t = setTimeout(() => api.get('/members', { params: { q, status: 'ACTIVE' } }).then((r) => setFound(r.data.slice(0, 6))), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  useEffect(() => {
+    if (!f.coachId || !f.classTypeId) return;
+    setSlots(null);
+    api.get('/private/slots', { params: f }).then((r) => setSlots(r.data));
+  }, [f]);
+  async function book(time: string) {
+    if (!member) return;
+    if (!confirm(`幫 ${member.name} 預約 ${f.date} ${time} 的私人課？`)) return;
+    await api.post('/private/book', { ...f, memberId: member.id, startTime: time });
+    onDone();
+  }
+  const usable = coaches.filter((c) => withSlots.some((w) => w.id === c.id));
+  return (
+    <Modal title="預約私人課" onClose={onClose}>
+      <div className="space-y-3">
+        {member ? (
+          <div className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2 text-sm">
+            <span><span className="font-medium">{member.name}</span> <span className="text-gray-400">{member.phone}</span></span>
+            <button className="text-xs text-brand" onClick={() => setMember(null)}>更換</button>
+          </div>
+        ) : (
+          <div>
+            <Field label="會員"><input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜尋姓名或電話" /></Field>
+            <div className="divide-y divide-gray-50">{found.map((m) => (
+              <button key={m.id} className="w-full text-left px-1 py-2 text-sm hover:bg-gray-50 flex justify-between" onClick={() => setMember(m)}>
+                <span>{m.name} <span className="text-gray-400">{m.phone}</span></span><span className="text-xs text-gray-400">{m.activePasses?.length ? passText(m.activePasses[0]) : '沒有有效方案'}</span>
+              </button>))}</div>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="課程"><select className="input" value={f.classTypeId} onChange={(e) => setF({ ...f, classTypeId: e.target.value })}>{types.map((t) => <option key={t.id} value={t.id}>{t.name}（{t.durationMin} 分）</option>)}</select></Field>
+          <Field label="教練"><select className="input" value={f.coachId} onChange={(e) => setF({ ...f, coachId: e.target.value })}>{usable.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        </div>
+        {!usable.length && <p className="text-xs text-amber-600">還沒有教練設定私人課時段，請到「方案與課程 → 教練」設定。</p>}
+        <Field label="日期"><input type="date" className="input" value={f.date} min={localDay()} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+        <div>
+          <div className="text-xs font-medium text-gray-500 mb-1.5">可預約時間</div>
+          {!slots ? <p className="text-sm text-gray-400">載入中…</p> : slots.length === 0 ? <p className="text-sm text-gray-400">這天沒有空檔。</p> : (
+            <div className="grid grid-cols-4 gap-2">
+              {slots.map((t) => <button key={t} disabled={!member} className="btn-secondary text-sm py-1.5 disabled:opacity-40" onClick={() => book(t)}>{t}</button>)}
+            </div>
+          )}
+          {!member && slots?.length ? <p className="text-xs text-gray-400 mt-1">先選擇會員再點時間</p> : null}
+        </div>
+      </div>
     </Modal>
   );
 }

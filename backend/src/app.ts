@@ -23,7 +23,8 @@ app.use(cors({
   credentials: true,
 }));
 // 保留原始內容：LINE webhook 驗證簽章需要未經解析的 body
-app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8'); } }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' })); // 綠界付款通知為表單格式
+app.use(express.json({ limit: '5mb', verify: (req, _res, buf) => { (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8'); } }));
 
 app.use('/api', routes);
 

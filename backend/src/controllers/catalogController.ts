@@ -13,6 +13,8 @@ const classTypeSchema = z.object({
   durationMin: z.coerce.number().int().min(10).max(600).optional(),
   defaultCapacity: z.coerce.number().int().min(1).max(500).optional(),
   creditCost: z.coerce.number().int().min(0).max(20).optional(),
+  isPrivate: z.boolean().optional(),
+  isOnline: z.boolean().optional(),
   active: z.boolean().optional(),
 });
 
@@ -40,11 +42,18 @@ const coachSchema = z.object({
   name: z.string().trim().min(1, '請填寫教練姓名').max(40),
   phone: z.string().trim().max(30).optional().nullable(),
   color: color.optional(),
+  payPerClass: z.coerce.number().int().min(0).max(100000).optional(),
+  payPerHead: z.coerce.number().int().min(0).max(100000).optional(),
+  headThreshold: z.coerce.number().int().min(0).max(500).optional(),
+  revenueShare: z.coerce.number().int().min(0).max(100).optional(),
   active: z.boolean().optional(),
 });
 
 export async function listCoaches(req: AuthRequest, res: Response) {
-  res.json(await prisma.coach.findMany({ where: { userId: req.userId! }, orderBy: [{ active: 'desc' }, { name: 'asc' }] }));
+  res.json(await prisma.coach.findMany({
+    where: { userId: req.userId! }, orderBy: [{ active: 'desc' }, { name: 'asc' }],
+    include: { _count: { select: { availability: true } } },
+  }));
 }
 export async function createCoach(req: AuthRequest, res: Response) {
   res.status(201).json(await prisma.coach.create({ data: { ...coachSchema.parse(req.body), userId: req.userId! } }));
@@ -70,6 +79,9 @@ const planSchema = z.object({
   price: z.coerce.number().int().min(0).max(10_000_000),
   classTypeIds: z.array(z.string()).optional(),
   dailyLimit: z.coerce.number().int().min(1).max(20).optional().nullable(),
+  onlineSale: z.boolean().optional(),
+  trialOnly: z.boolean().optional(),
+  description: z.string().trim().max(500).optional().nullable(),
   active: z.boolean().optional(),
 }).superRefine((p, ctx) => {
   if (p.kind === 'PACK' && !p.credits) ctx.addIssue({ code: 'custom', path: ['credits'], message: '堂數卡須填寫堂數' });

@@ -52,3 +52,24 @@ export function passText(p: { kind: string; creditsLeft: number | null; endDate:
   const left = p.kind === 'PERIOD' ? '不限堂數' : `剩 ${p.creditsLeft ?? 0} 堂`;
   return `${left}・${dateStr(p.endDate)} 到期${p.status === 'FROZEN' ? '（凍結中）' : ''}`;
 }
+
+export const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
+  PENDING: { label: '待處理', cls: 'bg-amber-50 text-amber-600' },
+  PAID: { label: '已付款', cls: 'bg-green-50 text-green-600' },
+  REJECTED: { label: '已退回', cls: 'bg-red-50 text-red-500' },
+  CANCELLED: { label: '已取消', cls: 'bg-gray-100 text-gray-400' },
+  FAILED: { label: '付款失敗', cls: 'bg-red-50 text-red-500' },
+};
+export const INVOICE_STATUS: Record<string, string> = { ISSUED: '已開立', VOID: '已作廢', FAILED: '開立失敗' };
+export const CARRIER: Record<string, string> = { '': '會員載具（Email 通知）', MOBILE: '手機條碼', CITIZEN: '自然人憑證', DONATE: '捐贈', COMPANY: '公司統編' };
+
+/** 下載後端產生的 CSV（需要帶登入 token，所以用 axios 取檔再存） */
+export async function downloadCsv(api: { get: (url: string, cfg: object) => Promise<{ data: Blob; headers: Record<string, string> }> }, url: string, params: object, fallbackName: string) {
+  const r = await api.get(url, { params, responseType: 'blob' });
+  const m = /filename\*=UTF-8''([^;]+)/.exec(r.headers['content-disposition'] ?? '');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(r.data);
+  a.download = m ? decodeURIComponent(m[1]) : fallbackName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}

@@ -19,7 +19,7 @@ export async function generateSessions(userId: string, days?: number) {
       const startsAt = localToUtc(day, t.startTime, studio.timezone);
       if (startsAt <= now) continue;
       rows.push({
-        userId, classTypeId: t.classTypeId, coachId: t.coachId, templateId: t.id, room: t.room,
+        userId, classTypeId: t.classTypeId, coachId: t.coachId, templateId: t.id, room: t.room, branchId: t.branchId, liveUrl: t.liveUrl,
         startsAt, endsAt: new Date(startsAt.getTime() + t.durationMin * 60e3), capacity: t.capacity,
       });
     }

@@ -5,7 +5,7 @@ import api from '../api/client';
 import { can, isAdmin } from '../lib/permissions';
 import { setTimeZone } from '../lib/format';
 import {
-  LayoutDashboard, CalendarDays, Repeat, Users, Tags, BarChart3, Settings, ShieldCheck, Dumbbell, Menu, X, Building2,
+  LayoutDashboard, CalendarDays, Repeat, Users, Tags, BarChart3, Settings, ShieldCheck, Dumbbell, Menu, X, Building2, ShoppingBag, Megaphone, DoorOpen,
 } from 'lucide-react';
 
 export default function Layout() {
@@ -21,6 +21,16 @@ export default function Layout() {
   useEffect(() => {
     api.get('/studio').then((r) => { setTimeZone(r.data.timezone); setStudioName(r.data.name); }).catch(() => {});
   }, []);
+  // 待審核的轉帳訂單數（顯示在選單上），切換頁面時更新
+  const [pendingOrders, setPendingOrders] = useState(0);
+  useEffect(() => {
+    if (!can(user, 'members')) return;
+    const refresh = () => api.get('/orders', { params: { status: 'PENDING', method: 'TRANSFER' } })
+      .then((r) => setPendingOrders(r.data.filter((o: { transferLast5: string | null }) => o.transferLast5).length)).catch(() => {});
+    refresh();
+    window.addEventListener('orders-changed', refresh); // 訂單頁審核後立即更新數字
+    return () => window.removeEventListener('orders-changed', refresh);
+  }, [location.pathname, user]);
 
   function handleLogout() { logout(); navigate('/login'); }
 
@@ -60,13 +70,16 @@ export default function Layout() {
           {can(user, 'schedule') && <SidebarLink to="/schedule" label="課表與點名" icon={CalendarDays} />}
           {can(user, 'schedule') && <SidebarLink to="/templates" label="固定課表" icon={Repeat} />}
           {can(user, 'members') && <SidebarLink to="/members" label="會員" icon={Users} />}
+          {can(user, 'members') && <SidebarLink to="/orders" label="線上訂單" icon={ShoppingBag} badge={pendingOrders} />}
           {can(user, 'catalog') && <SidebarLink to="/catalog" label="方案與課程" icon={Tags} />}
+          {can(user, 'marketing') && <SidebarLink to="/marketing" label="行銷" icon={Megaphone} />}
+          {can(user, 'rentals') && <SidebarLink to="/rentals" label="場地租借" icon={DoorOpen} />}
           {can(user, 'reports') && <SidebarLink to="/reports" label="營收報表" icon={BarChart3} />}
           {can(user, 'settings') && <SidebarLink to="/settings" label="教室設定" icon={Settings} />}
           <SidebarLink to="/accounts" label={isAdmin(user) ? '帳號權限' : '我的帳號'} icon={ShieldCheck} />
         </nav>
         <div className="px-3 pb-3 pb-safe flex items-center justify-between gap-2">
-          <span className="text-xs text-gray-300 pl-1">StudioMate v0.1</span>
+          <span className="text-xs text-gray-300 pl-1">StudioMate v0.2</span>
           <button onClick={handleLogout} className="text-xs text-gray-500 border border-gray-200 rounded-lg px-2.5 py-1 hover:border-red-200 hover:text-red-500 transition-colors">
             登出
           </button>
@@ -90,7 +103,7 @@ export default function Layout() {
   );
 }
 
-function SidebarLink({ to, label, icon: Icon, exact }: { to: string; label: string; icon: React.ElementType; exact?: boolean }) {
+function SidebarLink({ to, label, icon: Icon, exact, badge }: { to: string; label: string; icon: React.ElementType; exact?: boolean; badge?: number }) {
   return (
     <NavLink
       to={to}
@@ -101,6 +114,7 @@ function SidebarLink({ to, label, icon: Icon, exact }: { to: string; label: stri
     >
       <Icon className="w-4 h-4" />
       {label}
+      {!!badge && <span className="ml-auto text-[11px] bg-red-500 text-white rounded-full px-1.5 min-w-[1.25rem] text-center">{badge}</span>}
     </NavLink>
   );
 }

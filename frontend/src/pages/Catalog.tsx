@@ -77,7 +77,10 @@ export default function Catalog() {
           <div className="divide-y divide-gray-50">
             {shownPlans.map((p) => (
               <Row key={p.id} inactive={!p.active} onEdit={() => setEditing({ tab, item: p })} onDelete={() => remove('plans', p.id, p.name)}
-                title={<>{p.name}<span className="text-xs bg-gray-100 text-gray-500 px-1.5 rounded ml-2">{PLAN_KIND[p.kind]}</span>{!p.active && <span className="text-xs text-gray-400 ml-2">停售</span>}</>}
+                title={<>{p.name}<span className="text-xs bg-gray-100 text-gray-500 px-1.5 rounded ml-2">{PLAN_KIND[p.kind]}</span>
+                  {p.onlineSale && <span className="text-xs bg-green-50 text-green-600 px-1.5 rounded ml-1">線上販售</span>}
+                  {p.trialOnly && <span className="text-xs bg-amber-50 text-amber-600 px-1.5 rounded ml-1">體驗</span>}
+                  {!p.active && <span className="text-xs text-gray-400 ml-2">停售</span>}</>}
                 sub={`${p.kind === 'PERIOD' ? `不限堂數${p.dailyLimit ? `・每日 ${p.dailyLimit} 堂` : ''}` : `${p.credits} 堂`}・${p.validDays} 天有效${p.classTypeIds.length ? `・限 ${typeName(p.classTypeIds)}` : ''}`}
                 right={<span className="font-semibold text-gray-700">{money(p.price)}</span>} />
             ))}
@@ -87,7 +90,8 @@ export default function Catalog() {
           <div className="divide-y divide-gray-50">
             {shownTypes.map((t) => (
               <Row key={t.id} inactive={!t.active} color={t.color} onEdit={() => setEditing({ tab, item: t })} onDelete={() => remove('class-types', t.id, t.name)}
-                title={<>{t.name}{!t.active && <span className="text-xs text-gray-400 ml-2">停用</span>}</>}
+                title={<>{t.name}{t.isPrivate && <span className="text-xs bg-purple-50 text-purple-600 px-1.5 rounded ml-2">私人課</span>}
+                  {t.isOnline && <span className="text-xs bg-sky-50 text-sky-600 px-1.5 rounded ml-1">直播</span>}{!t.active && <span className="text-xs text-gray-400 ml-2">停用</span>}</>}
                 sub={`${t.durationMin} 分鐘・預設 ${t.defaultCapacity} 人・每堂扣 ${t.creditCost} 堂`} />
             ))}
           </div>
@@ -96,7 +100,8 @@ export default function Catalog() {
           <div className="divide-y divide-gray-50">
             {shownCoaches.map((c) => (
               <Row key={c.id} inactive={!c.active} color={c.color} onEdit={() => setEditing({ tab, item: c })} onDelete={() => remove('coaches', c.id, c.name)}
-                title={<>{c.name}{!c.active && <span className="text-xs text-gray-400 ml-2">停用</span>}</>} sub={c.phone ?? ''} />
+                title={<>{c.name}{!c.active && <span className="text-xs text-gray-400 ml-2">停用</span>}</>}
+                sub={[c.phone, payRule(c), c._count?.availability ? `私人課時段 ${c._count.availability} 段` : ''].filter(Boolean).join('・')} />
             ))}
           </div>
         ))}
@@ -108,6 +113,10 @@ export default function Catalog() {
     </div>
   );
 }
+
+const payRule = (c: Coach) => [
+  c.payPerClass ? `每堂 ${c.payPerClass}` : '', c.payPerHead ? `超過 ${c.headThreshold} 人每人 +${c.payPerHead}` : '', c.revenueShare ? `抽成 ${c.revenueShare}%` : '',
+].filter(Boolean).join('、');
 
 const Empty = ({ text }: { text: string }) => <p className="text-sm text-gray-400 p-4">{text}</p>;
 
@@ -144,6 +153,7 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
   const [f, setF] = useState({
     name: p?.name ?? '', kind: (p?.kind ?? 'PACK') as PlanKind, credits: String(p?.credits ?? 10), validDays: String(p?.validDays ?? 90),
     price: String(p?.price ?? ''), dailyLimit: String(p?.dailyLimit ?? ''), classTypeIds: p?.classTypeIds ?? [], active: p?.active ?? true,
+    onlineSale: p?.onlineSale ?? false, trialOnly: p?.trialOnly ?? false, description: p?.description ?? '',
   });
   function setKind(kind: PlanKind) {
     setF((x) => ({ ...x, kind, ...(p ? {} : kind === 'PERIOD' ? { validDays: '30' } : kind === 'DROPIN' ? { validDays: '30' } : { validDays: '90' }) }));
@@ -153,6 +163,7 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
     e.preventDefault();
     const body = {
       name: f.name, kind: f.kind, validDays: +f.validDays, price: +f.price, classTypeIds: f.classTypeIds, active: f.active,
+      onlineSale: f.onlineSale, trialOnly: f.trialOnly, description: f.description || null,
       credits: f.kind === 'PACK' ? +f.credits : null, dailyLimit: f.kind === 'PERIOD' && f.dailyLimit ? +f.dailyLimit : null,
     };
     if (p) await api.put(`/plans/${p.id}`, body); else await api.post('/plans', body);
@@ -184,7 +195,10 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
             </div>
           </Field>
         )}
+        <Field label="方案說明" hint="顯示在會員網頁的購買頁"><textarea className="input" rows={2} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="例如：適合每週上 1～2 堂的學員，可上所有團體課" /></Field>
         <Active value={f.active} onChange={(v) => setF({ ...f, active: v })} label="販售中" />
+        <Active value={f.onlineSale} onChange={(v) => setF({ ...f, onlineSale: v })} label="開放會員在手機網頁購買" />
+        <Active value={f.trialOnly} onChange={(v) => setF({ ...f, trialOnly: v })} label="體驗方案：限沒有購買紀錄的會員購買一次" />
         <button className="btn-primary w-full">儲存</button>
       </form>
     </Modal>
@@ -192,7 +206,10 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
 }
 
 function TypeForm({ t, onClose, onSaved }: { t: ClassType | null; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState({ name: t?.name ?? '', color: t?.color ?? COLORS[0], durationMin: String(t?.durationMin ?? 60), defaultCapacity: String(t?.defaultCapacity ?? 12), creditCost: String(t?.creditCost ?? 1), active: t?.active ?? true });
+  const [f, setF] = useState({
+    name: t?.name ?? '', color: t?.color ?? COLORS[0], durationMin: String(t?.durationMin ?? 60), defaultCapacity: String(t?.defaultCapacity ?? 12),
+    creditCost: String(t?.creditCost ?? 1), active: t?.active ?? true, isPrivate: t?.isPrivate ?? false, isOnline: t?.isOnline ?? false,
+  });
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const body = { ...f, durationMin: +f.durationMin, defaultCapacity: +f.defaultCapacity, creditCost: +f.creditCost };
@@ -209,6 +226,8 @@ function TypeForm({ t, onClose, onSaved }: { t: ClassType | null; onClose: () =>
           <Field label="預設名額"><input type="number" min={1} className="input" value={f.defaultCapacity} onChange={(e) => setF({ ...f, defaultCapacity: e.target.value })} /></Field>
           <Field label="每堂扣"><input type="number" min={0} className="input" value={f.creditCost} onChange={(e) => setF({ ...f, creditCost: e.target.value })} /></Field>
         </div>
+        <Active value={f.isPrivate} onChange={(v) => setF({ ...f, isPrivate: v })} label="私人課：會員依教練可預約時段自己預約（一堂一人）" />
+        <Active value={f.isOnline} onChange={(v) => setF({ ...f, isOnline: v })} label="線上直播課（在課程或固定課表填入直播連結）" />
         <Active value={f.active} onChange={(v) => setF({ ...f, active: v })} label="開課中" />
         <button className="btn-primary w-full">儲存</button>
       </form>
@@ -217,11 +236,17 @@ function TypeForm({ t, onClose, onSaved }: { t: ClassType | null; onClose: () =>
 }
 
 function CoachForm({ c, onClose, onSaved }: { c: Coach | null; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState({ name: c?.name ?? '', phone: c?.phone ?? '', color: c?.color ?? COLORS[3], active: c?.active ?? true });
+  const [f, setF] = useState({
+    name: c?.name ?? '', phone: c?.phone ?? '', color: c?.color ?? COLORS[3], active: c?.active ?? true,
+    payPerClass: String(c?.payPerClass ?? 0), payPerHead: String(c?.payPerHead ?? 0), headThreshold: String(c?.headThreshold ?? 0), revenueShare: String(c?.revenueShare ?? 0),
+  });
+  const [slots, setSlots] = useState<Slot[]>([]);
+  useEffect(() => { if (c) api.get(`/coaches/${c.id}/availability`).then((r) => setSlots(r.data)); }, [c]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const body = { ...f, phone: f.phone || null };
-    if (c) await api.put(`/coaches/${c.id}`, body); else await api.post('/coaches', body);
+    const body = { ...f, phone: f.phone || null, payPerClass: +f.payPerClass || 0, payPerHead: +f.payPerHead || 0, headThreshold: +f.headThreshold || 0, revenueShare: +f.revenueShare || 0 };
+    const saved = c ? (await api.put(`/coaches/${c.id}`, body)).data : (await api.post('/coaches', body)).data;
+    await api.put(`/coaches/${saved.id}/availability`, { slots: slots.map(({ weekday, startTime, endTime }) => ({ weekday, startTime, endTime })) });
     onSaved();
   }
   return (
@@ -230,9 +255,52 @@ function CoachForm({ c, onClose, onSaved }: { c: Coach | null; onClose: () => vo
         <Field label="姓名"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
         <Field label="電話"><input className="input" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
         <Field label="顏色"><ColorPicker value={f.color} onChange={(v) => setF({ ...f, color: v })} /></Field>
+        <div className="border-t border-gray-100 pt-3">
+          <div className="text-xs font-medium text-gray-500 mb-2">薪資計算（教練薪資報表使用）</div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="每堂鐘點（元）"><input type="number" min={0} className="input" value={f.payPerClass} onChange={(e) => setF({ ...f, payPerClass: e.target.value })} /></Field>
+            <Field label="課程產值抽成 %"><input type="number" min={0} max={100} className="input" value={f.revenueShare} onChange={(e) => setF({ ...f, revenueShare: e.target.value })} /></Field>
+            <Field label="人數門檻"><input type="number" min={0} className="input" value={f.headThreshold} onChange={(e) => setF({ ...f, headThreshold: e.target.value })} /></Field>
+            <Field label="超過門檻每人加給"><input type="number" min={0} className="input" value={f.payPerHead} onChange={(e) => setF({ ...f, payPerHead: e.target.value })} /></Field>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">例：每堂 800、超過 8 人每人加 50、不抽成。課程產值＝出席學員所用方案的每堂單價加總。</p>
+        </div>
+        <AvailabilityEditor slots={slots} onChange={setSlots} />
         <Active value={f.active} onChange={(v) => setF({ ...f, active: v })} label="在職" />
         <button className="btn-primary w-full">儲存</button>
       </form>
     </Modal>
+  );
+}
+
+interface Slot { weekday: number; startTime: string; endTime: string }
+const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WD = ['日', '一', '二', '三', '四', '五', '六'];
+
+/** 教練每週可預約的私人課時段 */
+function AvailabilityEditor({ slots, onChange }: { slots: Slot[]; onChange: (s: Slot[]) => void }) {
+  const update = (i: number, patch: Partial<Slot>) => onChange(slots.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  return (
+    <div className="border-t border-gray-100 pt-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-gray-500">私人課可預約時段</span>
+        <button type="button" className="text-xs text-brand" onClick={() => onChange([...slots, { weekday: 1, startTime: '10:00', endTime: '12:00' }])}>＋ 新增時段</button>
+      </div>
+      {slots.length === 0 ? <p className="text-xs text-gray-400">沒有設定時段，會員無法預約這位教練的私人課。</p> : (
+        <div className="space-y-2">
+          {slots.map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select className="input w-24 text-sm" value={s.weekday} onChange={(e) => update(i, { weekday: +e.target.value })} aria-label="星期">
+                {WD_ORDER.map((w) => <option key={w} value={w}>星期{WD[w]}</option>)}
+              </select>
+              <input type="time" className="input text-sm" value={s.startTime} onChange={(e) => update(i, { startTime: e.target.value })} aria-label="開始" />
+              <span className="text-gray-400">～</span>
+              <input type="time" className="input text-sm" value={s.endTime} onChange={(e) => update(i, { endTime: e.target.value })} aria-label="結束" />
+              <button type="button" className="p-1.5 rounded-lg hover:bg-gray-50" aria-label="移除時段" onClick={() => onChange(slots.filter((_, j) => j !== i))}><Trash2 className="w-4 h-4 text-gray-400" /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

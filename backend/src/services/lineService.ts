@@ -12,7 +12,8 @@ function getClient() {
   return client;
 }
 
-export type NotifyKind = 'CLASS' | 'EXPIRY' | 'LOW_CREDIT' | 'PROMOTED' | 'SESSION_CANCELLED';
+export type NotifyKind = 'CLASS' | 'EXPIRY' | 'LOW_CREDIT' | 'PROMOTED' | 'SESSION_CANCELLED'
+  | 'REFERRAL' | 'ORDER_PAID' | 'ORDER_REJECTED' | 'CAMPAIGN' | 'PRIVATE_BOOKED';
 
 /** 通知會員。回傳 'sent' | 'sandbox' | 'skipped'（未綁定 LINE 或已通知過）| 'failed' */
 export async function notifyMember(userId: string, memberId: string, kind: NotifyKind, refId: string, text: string) {

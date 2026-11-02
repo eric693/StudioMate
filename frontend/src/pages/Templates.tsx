@@ -4,7 +4,7 @@ import api from '../api/client';
 import HowTo from '../components/HowTo';
 import SearchBox, { matches } from '../components/SearchBox';
 import Modal, { Field } from '../components/Modal';
-import { ClassType, Coach, Template } from '../types';
+import { Branch, ClassType, Coach, Template } from '../types';
 import { WEEKDAYS, dateStr } from '../lib/format';
 
 const ORDER = [1, 2, 3, 4, 5, 6, 0]; // 週一排最前面
@@ -21,8 +21,11 @@ export default function Templates() {
   const uniq = <T extends { id: string }>(a: (T | null)[]) => [...new Map(a.filter(Boolean).map((x) => [x!.id, x!])).values()];
   const typeOpts = uniq(list.map((t) => t.classType));
   const coachOpts = uniq(list.map((t) => t.coach));
+  const branchOpts = uniq(list.map((t) => t.branch));
+  const [branchId, setBranchId] = useState('');
   const shown = list.filter((t) => matches(q, t.classType.name, t.coach?.name, t.room, t.startTime)
-    && (!typeId || t.classTypeId === typeId) && (!coachId || t.coachId === coachId) && (weekday === '' || t.weekday === +weekday));
+    && (!typeId || t.classTypeId === typeId) && (!coachId || t.coachId === coachId) && (weekday === '' || t.weekday === +weekday)
+    && (!branchId || t.branchId === branchId));
   useEffect(() => { load(); }, []);
 
   async function remove(t: Template) {
@@ -54,6 +57,9 @@ export default function Templates() {
           <select className="input w-auto text-sm" value={coachId} onChange={(e) => setCoachId(e.target.value)} aria-label="教練">
             <option value="">全部教練</option>{coachOpts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {branchOpts.length > 0 && <select className="input w-auto text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)} aria-label="分店">
+            <option value="">全部分店</option>{branchOpts.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>}
           {shown.length !== list.length && <span className="text-xs text-gray-400">符合 {shown.length} / {list.length} 堂</span>}
         </div>
       )}
@@ -75,7 +81,7 @@ export default function Templates() {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-gray-800 truncate">{t.startTime} {t.classType.name}</div>
                         <div className="text-xs text-gray-400 truncate">
-                          {t.coach?.name ?? '未指定教練'}・{t.durationMin} 分・{t.capacity} 人{t.room ? `・${t.room}` : ''}
+                          {t.coach?.name ?? '未指定教練'}・{t.durationMin} 分・{t.capacity} 人{t.room ? `・${t.room}` : ''}{t.branch ? `・${t.branch.name}` : ''}{t.liveUrl ? '・直播' : ''}
                           {t.activeTo ? `・至 ${dateStr(t.activeTo)}` : ''}
                         </div>
                       </div>
@@ -101,10 +107,13 @@ function TemplateForm({ t, onClose, onSaved }: { t: Template | null; onClose: ()
   const [f, setF] = useState({
     classTypeId: t?.classTypeId ?? '', coachId: t?.coachId ?? '', weekday: String(t?.weekday ?? 1), startTime: t?.startTime ?? '19:00',
     durationMin: String(t?.durationMin ?? ''), capacity: String(t?.capacity ?? ''), room: t?.room ?? '', activeTo: t?.activeTo ? dateStr(t.activeTo) : '',
+    branchId: t?.branchId ?? '', liveUrl: t?.liveUrl ?? '',
   });
+  const [branches, setBranches] = useState<Branch[]>([]);
   useEffect(() => {
     api.get('/class-types').then((r) => { const a = r.data.filter((x: ClassType) => x.active || x.id === t?.classTypeId); setTypes(a); if (!t && a[0]) setF((x) => ({ ...x, classTypeId: a[0].id })); });
     api.get('/coaches').then((r) => setCoaches(r.data.filter((c: Coach) => c.active || c.id === t?.coachId)));
+    api.get('/branches').then((r) => setBranches(r.data.filter((b: Branch) => b.active || b.id === t?.branchId)));
   }, [t]);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const ct = types.find((x) => x.id === f.classTypeId);
@@ -114,7 +123,7 @@ function TemplateForm({ t, onClose, onSaved }: { t: Template | null; onClose: ()
     const body = {
       classTypeId: f.classTypeId, coachId: f.coachId || null, weekday: +f.weekday, startTime: f.startTime,
       durationMin: f.durationMin ? +f.durationMin : undefined, capacity: f.capacity ? +f.capacity : undefined,
-      room: f.room || null, activeTo: f.activeTo || null,
+      room: f.room || null, activeTo: f.activeTo || null, branchId: f.branchId || null, liveUrl: f.liveUrl || null,
     };
     if (t) {
       const r = await api.put(`/templates/${t.id}`, body);
@@ -142,6 +151,8 @@ function TemplateForm({ t, onClose, onSaved }: { t: Template | null; onClose: ()
             <Field label="教室"><input className="input" value={f.room} onChange={(e) => set('room', e.target.value)} placeholder="選填" /></Field>
             <Field label="結束日期" hint="空白＝持續開課"><input type="date" className="input" value={f.activeTo} onChange={(e) => set('activeTo', e.target.value)} /></Field>
           </div>
+          {branches.length > 0 && <Field label="分店"><select className="input" value={f.branchId} onChange={(e) => set('branchId', e.target.value)}><option value="">不指定</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>}
+          {(ct?.isOnline || f.liveUrl) && <Field label="直播連結" hint="每堂課都使用這個連結；只有已預約的會員看得到"><input className="input" type="url" value={f.liveUrl} onChange={(e) => set('liveUrl', e.target.value)} placeholder="https://meet.google.com/..." /></Field>}
           <button className="btn-primary w-full">{t ? '儲存' : '新增並產生課程'}</button>
         </form>
       )}

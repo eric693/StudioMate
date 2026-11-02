@@ -1,9 +1,9 @@
 // 預約核心規則：預約、候補、取消（退堂或晚取消扣堂）、候補遞補、點名、整堂取消。
 // 每個會改變名額或堂數的動作都在同一個交易中，並鎖住課程（與方案）資料列，避免兩人同時搶到最後一個名額。
-import { Prisma, Booking, BookingSource, Membership } from '@prisma/client';
+import { Prisma, Booking, BookingSource, BookingStatus, Membership, Studio } from '@prisma/client';
 import { prisma } from '../app';
 import { badRequest, conflict, notFound } from '../utils/http';
-import { addDays, dateOnly, localDate, localToUtc } from '../utils/time';
+import { addDays, dateOnly, formatLocal, localDate, localToUtc } from '../utils/time';
 import { getStudio } from './studioService';
 
 type Tx = Prisma.TransactionClient;
@@ -97,6 +97,10 @@ export async function bookSession({ userId, sessionId, memberId, source }: BookI
     const member = await tx.member.findFirst({ where: { id: memberId, userId } });
     if (!member) throw notFound('找不到會員');
     if (member.status !== 'ACTIVE') throw badRequest('此會員已停用');
+    if (source === 'MEMBER') {
+      const until = await suspendedUntil(tx, studio, memberId);
+      if (until) throw badRequest(`近期未到 ${studio.noShowLimit} 次，線上預約暫停至 ${formatLocal(until, studio.timezone)}，如需預約請聯絡教室`);
+    }
 
     const existing = await tx.booking.findUnique({ where: { sessionId_memberId: { sessionId, memberId } } });
     if (existing && ['BOOKED', 'WAITLIST', 'ATTENDED'].includes(existing.status)) {
@@ -123,6 +127,24 @@ export async function bookSession({ userId, sessionId, memberId, source }: BookI
       ? tx.booking.update({ where: { id: existing.id }, data: fields })
       : tx.booking.create({ data: fields });
   });
+}
+
+/**
+ * 未到違規：最近 noShowWindowDays 天內未到（可含晚取消）達 noShowLimit 次，
+ * 從最後一次違規起暫停線上預約 noShowSuspendDays 天。回傳暫停到期時間，沒被暫停回傳 null。
+ */
+export async function suspendedUntil(db: Tx | typeof prisma, studio: Studio, memberId: string): Promise<Date | null> {
+  if (!studio.noShowLimit) return null;
+  const since = new Date(Date.now() - studio.noShowWindowDays * 86400e3);
+  const statuses: BookingStatus[] = studio.lateCancelCountsAsNoShow ? ['NO_SHOW', 'LATE_CANCELLED'] : ['NO_SHOW'];
+  const v = await db.booking.findMany({
+    where: { memberId, status: { in: statuses }, session: { startsAt: { gte: since } } },
+    select: { session: { select: { startsAt: true } } },
+    orderBy: { session: { startsAt: 'desc' } },
+  });
+  if (v.length < studio.noShowLimit) return null;
+  const until = new Date(v[0].session.startsAt.getTime() + studio.noShowSuspendDays * 86400e3);
+  return until > new Date() ? until : null;
 }
 
 /** 名額釋出後依候補順序遞補；遇到沒有可用方案的人就跳過。回傳被遞補的預約 */
@@ -173,6 +195,11 @@ export async function cancelBooking(opts: { userId: string; bookingId: string; b
       where: { id: booking.id },
       data: { status: forfeit ? 'LATE_CANCELLED' : 'CANCELLED', cancelledAt: now, creditsCharged: forfeit ? booking.creditsCharged : 0 },
     });
+    // 私人課一堂一人：取消後課程也一併取消，釋出教練時段
+    if (session.isPrivate) {
+      await tx.classSession.update({ where: { id: session.id }, data: { status: 'CANCELLED', cancelReason: '私人課已取消' } });
+      return { booking: b, late, refunded: !forfeit, promoted: null };
+    }
     const promoted = await promoteWaitlist(tx, opts.userId, session, studio.timezone);
     return { booking: b, late, refunded: !forfeit, promoted };
   });
