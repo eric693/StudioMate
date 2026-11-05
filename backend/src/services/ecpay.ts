@@ -57,7 +57,15 @@ function tradeDate(d = new Date()) {
 }
 
 /** 產生導向綠界付款頁的表單（前端自動送出） */
-export function buildCheckout(c: EcpayCreds, o: { tradeNo: string; amount: number; itemName: string; notifyUrl: string; backUrl: string }) {
+export interface CheckoutOptions {
+  tradeNo: string; amount: number; itemName: string; notifyUrl: string; backUrl: string;
+  /** 信用卡分期期數，例如 "3,6,12"（會員在綠界頁面選擇） */
+  installments?: string | null;
+  /** 定期定額：每月扣款 execTimes 期，之後每期結果通知 periodUrl */
+  period?: { execTimes: number; periodUrl: string } | null;
+}
+
+export function buildCheckout(c: EcpayCreds, o: CheckoutOptions) {
   const fields: Record<string, string> = {
     MerchantID: c.merchantId,
     MerchantTradeNo: o.tradeNo,
@@ -71,9 +79,32 @@ export function buildCheckout(c: EcpayCreds, o: { tradeNo: string; amount: numbe
     ChoosePayment: 'Credit',
     EncryptType: '1',
   };
+  if (o.period) {
+    // 定期定額：每 1 個月扣一次，共 execTimes 期（綠界月扣上限 99 期）
+    Object.assign(fields, {
+      PeriodAmount: String(o.amount), PeriodType: 'M', Frequency: '1',
+      ExecTimes: String(Math.min(99, Math.max(2, o.period.execTimes))), PeriodReturnURL: o.period.periodUrl,
+    });
+  } else if (o.installments) {
+    fields.CreditInstallment = o.installments;
+  }
   fields.CheckMacValue = checkMac(fields, c);
   const action = c.production ? 'https://payment.ecpay.com.tw/Cashier/AioCheckOut/V5' : 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5';
   return { action, fields };
+}
+
+/** 定期定額：停止之後的扣款（Action=Cancel） */
+export async function cancelPeriod(c: EcpayCreds, tradeNo: string) {
+  const fields: Record<string, string> = { MerchantID: c.merchantId, MerchantTradeNo: tradeNo, Action: 'Cancel', TimeStamp: String(Math.floor(Date.now() / 1000)) };
+  fields.CheckMacValue = checkMac(fields, c);
+  const host = c.production ? 'https://payment.ecpay.com.tw' : 'https://payment-stage.ecpay.com.tw';
+  const r = await fetch(`${host}/Cashier/CreditCardPeriodAction`, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields).toString(), signal: AbortSignal.timeout(20000),
+  });
+  const text = await r.text();
+  const p = Object.fromEntries(new URLSearchParams(text));
+  if (p.RtnCode !== '1') throw new Error(p.RtnMsg || text.slice(0, 100) || '綠界停止扣款失敗');
 }
 
 /* ---------- 電子發票 ---------- */
@@ -107,8 +138,10 @@ export interface InvoiceBuyer {
   carrierType?: string | null; carrierNum?: string | null; taxId?: string | null; title?: string | null; loveCode?: string | null;
 }
 
-/** 開立 B2C 發票（含稅金額）。統編發票買方名稱用公司抬頭；捐贈用愛心碼 */
-export async function issueInvoice(c: EcpayCreds, o: { relateNumber: string; amount: number; itemName: string; buyer: InvoiceBuyer }) {
+export interface InvoiceItem { name: string; price: number; qty: number; word?: string }
+
+/** 開立 B2C 發票（含稅金額）。統編發票買方名稱用公司抬頭；捐贈用愛心碼。items 沒給時以 itemName 單一品項開立 */
+export async function issueInvoice(c: EcpayCreds, o: { relateNumber: string; amount: number; itemName: string; buyer: InvoiceBuyer; items?: InvoiceItem[] }) {
   const b = o.buyer;
   const company = b.carrierType === 'COMPANY' && b.taxId;
   const donate = b.carrierType === 'DONATE';
@@ -132,9 +165,29 @@ export async function issueInvoice(c: EcpayCreds, o: { relateNumber: string; amo
     InvoiceRemark: '',
     InvType: '07',
     vat: '1',
-    Items: [{ ItemSeq: 1, ItemName: o.itemName.slice(0, 100), ItemCount: 1, ItemWord: '份', ItemPrice: o.amount, ItemTaxType: '1', ItemAmount: o.amount }],
+    Items: invoiceItems(o.amount, o.itemName, o.items),
   });
   return { invoiceNo: d.InvoiceNo!, invoiceDate: d.InvoiceDate!, random: d.RandomNumber ?? '' };
+}
+
+/** 發票品項：多品項時若有折扣，加一行負數「折扣」讓合計等於發票金額 */
+function invoiceItems(amount: number, itemName: string, items?: InvoiceItem[]) {
+  if (!items?.length) return [{ ItemSeq: 1, ItemName: itemName.slice(0, 100), ItemCount: 1, ItemWord: '份', ItemPrice: amount, ItemTaxType: '1', ItemAmount: amount }];
+  const rows = items.map((it, i) => ({ ItemSeq: i + 1, ItemName: it.name.slice(0, 100), ItemCount: it.qty, ItemWord: it.word ?? '個', ItemPrice: it.price, ItemTaxType: '1', ItemAmount: it.price * it.qty }));
+  const diff = amount - rows.reduce((a, r) => a + r.ItemAmount, 0);
+  if (diff) rows.push({ ItemSeq: rows.length + 1, ItemName: '折扣', ItemCount: 1, ItemWord: '筆', ItemPrice: diff, ItemTaxType: '1', ItemAmount: diff });
+  return rows;
+}
+
+/** 開立折讓（部分退費）：線上折讓，買方免簽回。回傳折讓單號 */
+export async function allowanceInvoice(c: EcpayCreds, o: { invoiceNo: string; invoiceDate: Date; amount: number; itemName: string; email?: string | null }) {
+  const day = new Date(o.invoiceDate.getTime() + 8 * 3600e3).toISOString().slice(0, 10);
+  const d = await invoiceCall(c, '/B2CInvoice/Allowance', {
+    InvoiceNo: o.invoiceNo, InvoiceDate: day, AllowanceNotify: o.email ? 'E' : 'N', CustomerName: '', NotifyMail: o.email ?? '', NotifyPhone: '',
+    AllowanceAmount: o.amount,
+    Items: [{ ItemSeq: 1, ItemName: `${o.itemName}退費`.slice(0, 100), ItemCount: 1, ItemWord: '份', ItemPrice: o.amount, ItemTaxType: '1', ItemAmount: o.amount }],
+  }) as unknown as { IA_Allow_No?: string };
+  return d.IA_Allow_No ?? '';
 }
 
 export async function voidInvoice(c: EcpayCreds, invoiceNo: string, invoiceDate: Date, reason: string) {

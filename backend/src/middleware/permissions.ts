@@ -7,7 +7,10 @@ export const MODULES = [
   { key: 'catalog', label: '方案、課程類型與教練' },
   { key: 'reports', label: '營收報表、教練薪資' },
   { key: 'marketing', label: '行銷（折價券、群發、轉介紹）' },
-  { key: 'rentals', label: '場地租借' },
+  { key: 'rentals', label: '場地租借、置物櫃' },
+  { key: 'pos', label: '商品零售與庫存' },
+  { key: 'access', label: '門禁與入場紀錄' },
+  { key: 'staff', label: '員工班表、出勤與請假審核' },
   { key: 'settings', label: '教室設定（規則、LINE）' },
 ] as const;
 
@@ -19,6 +22,15 @@ export const MODULE_KEYS: string[] = MODULES.map((m) => m.key);
  */
 const PATH_MODULES: [RegExp, string][] = [
   [/^\/dashboard/, 'dashboard'],
+  [/^\/me\/clock/, ''], // 自己打卡：任何員工都可以
+  [/^\/leaves/, 'schedule'], // 請假申請（審核另外限制教練帳號）
+  [/^\/(shifts|clocks)/, 'staff'],
+  [/^\/(products|sales)/, 'pos'],
+  [/^\/access/, 'access'],
+  [/^\/lockers/, 'rentals'],
+  [/^\/(refunds|subscriptions|contracts)/, 'members'],
+  [/^\/(announcements|surveys)/, 'marketing'],
+  [/^\/reports\/(deferred|insights)/, 'reports'],
   [/^\/(sessions|bookings|templates|private)/, 'schedule'],
   [/^\/studio\/checkin/, 'schedule'], // 櫃檯顯示簽到 QR code
   [/^\/(members|memberships|orders)/, 'members'],
@@ -38,7 +50,7 @@ const SHARED_READ = /^\/(studio|class-types|coaches|plans|members|branches|rooms
 
 export function moduleForPath(path: string, method = 'GET'): string | null {
   if (method === 'GET' && SHARED_READ.test(path)) return null;
-  for (const [re, key] of PATH_MODULES) if (re.test(path)) return key;
+  for (const [re, key] of PATH_MODULES) if (re.test(path)) return key || null;
   return null;
 }
 

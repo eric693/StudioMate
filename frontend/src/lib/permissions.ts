@@ -7,6 +7,9 @@ const ROUTE_MODULES: [RegExp, string][] = [
   [/^\/(members|orders)/, 'members'],
   [/^\/marketing/, 'marketing'],
   [/^\/rentals/, 'rentals'],
+  [/^\/pos/, 'pos'],
+  [/^\/access/, 'access'],
+  [/^\/staff/, 'staff'],
   [/^\/catalog/, 'catalog'],
   [/^\/reports/, 'reports'],
   [/^\/settings/, 'settings'],
@@ -26,13 +29,13 @@ export function moduleOfRoute(path: string): string | null {
 }
 
 export function canRoute(user: User | null, path: string) {
-  if (path.startsWith('/accounts')) return !!user; // 自己的帳號設定人人可進，員工管理區塊另外判斷
+  if (path.startsWith('/accounts') || path.startsWith('/clock')) return !!user; // 自己的帳號設定人人可進，員工管理區塊另外判斷
   const m = moduleOfRoute(path);
   return m ? can(user, m) : true;
 }
 
 /** 員工登入後第一個可以進的頁面 */
 export function firstAllowedRoute(user: User | null) {
-  const order = ['/', '/schedule', '/members', '/orders', '/catalog', '/marketing', '/rentals', '/reports', '/settings'];
+  const order = ['/', '/schedule', '/members', '/orders', '/catalog', '/marketing', '/rentals', '/pos', '/access', '/staff', '/reports', '/settings'];
   return order.find((p) => canRoute(user, p)) ?? '/accounts';
 }

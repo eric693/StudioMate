@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Landmark, ChevronLeft } from 'lucide-react';
+import { CreditCard, Landmark, ChevronLeft, Wallet, Repeat, ShieldCheck } from 'lucide-react';
+import SignaturePad from '../../components/SignaturePad';
 import memberApi, { errorText } from './memberApi';
-import { ORDER_STATUS, PLAN_KIND, dateTime, localDay, money } from '../../lib/format';
+import { ORDER_METHOD, ORDER_STATUS, PLAN_KIND, TRUST_TYPE, dateTime, localDay, money } from '../../lib/format';
 import { Order } from '../../types';
 import { Me, Notify } from './types';
 
-interface ShopPlan { id: string; name: string; kind: string; credits: number | null; validDays: number; price: number; description: string | null; dailyLimit: number | null; trialOnly: boolean; classTypes: string[] }
-interface Shop { onlinePay: boolean; transfer: boolean; bankInfo: string | null; testMode: boolean; plans: ShopPlan[] }
+interface ShopPlan { id: string; name: string; kind: string; credits: number | null; validDays: number; price: number; description: string | null; dailyLimit: number | null; trialOnly: boolean; classTypes: string[]; recurring: boolean }
+interface Shop {
+  onlinePay: boolean; transfer: boolean; bankInfo: string | null; testMode: boolean; plans: ShopPlan[];
+  linePay: boolean; linePayTest: boolean; installments: string | null; installmentMin: number;
+  trust: { type: string; bank: string; note: string | null } | null; contractRequired: boolean;
+}
+type Method = 'ONLINE' | 'TRANSFER' | 'LINEPAY';
 
 /** 把綠界付款表單送出（整頁導向綠界） */
 function submitToEcpay(action: string, fields: Record<string, string>) {
@@ -53,7 +59,8 @@ export default function ShopTab({ me, orderId, onChange }: { me: Me; orderId: st
         <button key={p.id} className="card w-full text-left flex items-center gap-3 hover:shadow" onClick={() => setPlan(p)}>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2"><span className="font-semibold text-gray-800">{p.name}</span>
-              {p.trialOnly && <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 rounded">新朋友限定</span>}</div>
+              {p.trialOnly && <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 rounded">新朋友限定</span>}
+              {p.recurring && shop.onlinePay && <span className="text-[10px] bg-sky-50 text-sky-600 px-1.5 rounded">可每月自動續約</span>}</div>
             <div className="text-xs text-gray-500 mt-0.5">{PLAN_KIND[p.kind]}・{p.kind === 'PERIOD' ? `期間內不限堂數${p.dailyLimit ? `（每日 ${p.dailyLimit} 堂）` : ''}` : `${p.credits} 堂`}・{p.validDays} 天內有效</div>
             {p.classTypes.length > 0 && <div className="text-xs text-gray-400">限 {p.classTypes.join('、')}</div>}
             {p.description && <div className="text-xs text-gray-400 mt-1">{p.description}</div>}
@@ -64,13 +71,14 @@ export default function ShopTab({ me, orderId, onChange }: { me: Me; orderId: st
           </div>
         </button>
       ))}
+      {shop.trust && <div className="text-xs text-gray-500 flex items-start gap-1.5 px-1"><ShieldCheck className="w-4 h-4 text-green-600 flex-shrink-0" />本教室預收款項已交付{shop.trust.bank}辦理{TRUST_TYPE[shop.trust.type] ?? ''}{shop.trust.note ? `（${shop.trust.note}）` : ''}。</div>}
       {orders.filter((o) => o.status !== 'PENDING').length > 0 && (
         <div className="card">
           <div className="text-sm font-medium text-gray-700 mb-2">購買紀錄</div>
           <div className="divide-y divide-gray-50">
             {orders.filter((o) => o.status !== 'PENDING').map((o) => (
               <div key={o.id} className="py-2 flex items-center justify-between text-sm">
-                <div><div className="text-gray-700">{o.plan.name}</div><div className="text-xs text-gray-400">{dateTime(o.createdAt)}・{o.method === 'ONLINE' ? '刷卡' : '轉帳'}{o.rejectReason ? `・${o.rejectReason}` : ''}</div></div>
+                <div><div className="text-gray-700">{o.plan.name}</div><div className="text-xs text-gray-400">{dateTime(o.createdAt)}・{ORDER_METHOD[o.method]}{o.rejectReason ? `・${o.rejectReason}` : ''}</div></div>
                 <div className="text-right"><div className="text-gray-700">{money(o.amount)}</div><span className={`text-[11px] px-1.5 rounded-full ${ORDER_STATUS[o.status].cls}`}>{ORDER_STATUS[o.status].label}</span></div>
               </div>
             ))}
@@ -84,10 +92,18 @@ export default function ShopTab({ me, orderId, onChange }: { me: Me; orderId: st
 function Checkout({ me, shop, plan, onBack, onDone }: { me: Me; shop: Shop; plan: ShopPlan; onBack: () => void; onDone: Notify }) {
   const [code, setCode] = useState('');
   const [quote, setQuote] = useState<{ discount: number; amount: number; name: string | null } | null>(null);
-  const [method, setMethod] = useState<'ONLINE' | 'TRANSFER'>(shop.onlinePay ? 'ONLINE' : 'TRANSFER');
+  const [method, setMethod] = useState<Method>(shop.onlinePay ? 'ONLINE' : shop.linePay ? 'LINEPAY' : 'TRANSFER');
+  const [recurring, setRecurring] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [contract, setContract] = useState<string | null>(null);
+  const [sig, setSig] = useState<string | null>(null);
   const amount = quote?.amount ?? plan.price;
+  // 需要簽約時先載入合約內容（金額變動時重新代入）
+  useEffect(() => {
+    if (!shop.contractRequired) return;
+    memberApi.get('/contract-preview', { params: { planId: plan.id, code: quote ? code : '' } }).then((r) => setContract(r.data.content)).catch(() => undefined);
+  }, [shop.contractRequired, plan.id, quote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function apply() {
     setErr('');
@@ -96,8 +112,16 @@ function Checkout({ me, shop, plan, onBack, onDone }: { me: Me; shop: Shop; plan
   async function buy() {
     setErr(''); setBusy(true);
     try {
-      const r = await memberApi.post('/orders', { planId: plan.id, method, couponCode: quote ? code : null });
+      const r = await memberApi.post('/orders', {
+        planId: plan.id, method, couponCode: quote && !recurring ? code : null, recurring: recurring || undefined,
+        ...(shop.contractRequired ? { signature: sig, signerName: me.member.name } : {}),
+      });
       if (r.data.free) { onDone(`「${plan.name}」已加入您的帳戶`); return; }
+      if (method === 'LINEPAY') {
+        const lp = await memberApi.post(`/orders/${r.data.order.id}/linepay`);
+        window.location.href = lp.data.url;
+        return;
+      }
       if (method === 'ONLINE') {
         const f = await memberApi.post(`/orders/${r.data.order.id}/pay`);
         submitToEcpay(f.data.action, f.data.fields);
@@ -116,8 +140,9 @@ function Checkout({ me, shop, plan, onBack, onDone }: { me: Me; shop: Shop; plan
       </div>
       <div className="card space-y-2">
         <div className="text-sm font-medium text-gray-700">折價券</div>
+        {recurring && <p className="text-xs text-gray-400">每月自動扣款的方案不能使用折價券。</p>}
         <div className="flex gap-2">
-          <input className="input font-mono uppercase" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setQuote(null); }} placeholder="輸入代碼（選填）" />
+          <input disabled={recurring} className="input font-mono uppercase" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setQuote(null); }} placeholder="輸入代碼（選填）" />
           <button className="btn-secondary whitespace-nowrap" disabled={!code} onClick={apply}>套用</button>
         </div>
         {quote && <div className="text-xs text-green-600">{quote.name}：折抵 {money(quote.discount)}</div>}
@@ -127,22 +152,42 @@ function Checkout({ me, shop, plan, onBack, onDone }: { me: Me; shop: Shop; plan
         {shop.onlinePay && (
           <label className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${method === 'ONLINE' ? 'border-brand bg-brand/5' : 'border-gray-200'}`}>
             <input type="radio" checked={method === 'ONLINE'} onChange={() => setMethod('ONLINE')} /><CreditCard className="w-5 h-5 text-gray-500" />
-            <div><div className="text-sm text-gray-800">信用卡（綠界）</div><div className="text-xs text-gray-400">付款完成立即開通</div></div>
+            <div><div className="text-sm text-gray-800">信用卡（綠界）</div><div className="text-xs text-gray-400">付款完成立即開通{shop.installments && amount >= shop.installmentMin && !recurring ? `・可分 ${shop.installments.replace(/,/g, '、')} 期` : ''}</div></div>
+          </label>
+        )}
+        {method === 'ONLINE' && plan.recurring && (
+          <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ml-6 ${recurring ? 'border-sky-300 bg-sky-50' : 'border-gray-200'}`}>
+            <input type="checkbox" className="mt-1" checked={recurring} onChange={(e) => { setRecurring(e.target.checked); if (e.target.checked) { setQuote(null); setCode(''); } }} /><Repeat className="w-5 h-5 text-sky-600" />
+            <div><div className="text-sm text-gray-800">每月自動扣款續約</div><div className="text-xs text-gray-400">每 {plan.validDays} 天自動扣 {money(plan.price)} 並續約，隨時可在「我的」停止</div></div>
+          </label>
+        )}
+        {shop.linePay && (
+          <label className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${method === 'LINEPAY' ? 'border-brand bg-brand/5' : 'border-gray-200'}`}>
+            <input type="radio" checked={method === 'LINEPAY'} onChange={() => { setMethod('LINEPAY'); setRecurring(false); }} /><Wallet className="w-5 h-5 text-green-600" />
+            <div><div className="text-sm text-gray-800">LINE Pay</div><div className="text-xs text-gray-400">付款完成立即開通{shop.linePayTest ? '（測試環境）' : ''}</div></div>
           </label>
         )}
         {shop.transfer && (
           <label className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${method === 'TRANSFER' ? 'border-brand bg-brand/5' : 'border-gray-200'}`}>
-            <input type="radio" checked={method === 'TRANSFER'} onChange={() => setMethod('TRANSFER')} /><Landmark className="w-5 h-5 text-gray-500" />
+            <input type="radio" checked={method === 'TRANSFER'} onChange={() => { setMethod('TRANSFER'); setRecurring(false); }} /><Landmark className="w-5 h-5 text-gray-500" />
             <div><div className="text-sm text-gray-800">銀行轉帳</div><div className="text-xs text-gray-400">轉帳後回報後五碼，教室核對後開通</div></div>
           </label>
         )}
         {method === 'ONLINE' && shop.testMode && <p className="text-xs text-amber-600">目前為測試環境，不會真的扣款。測試卡號 4311-9522-2222-2222，有效期限任意未來日期，安全碼 222。</p>}
         {me.studio.invoiceEnabled && <p className="text-xs text-gray-400">付款後開立電子發票，載具可在「我的 → 發票設定」修改。</p>}
       </div>
+      {shop.contractRequired && (
+        <div className="card space-y-2">
+          <div className="text-sm font-medium text-gray-700">會員合約</div>
+          <div className="max-h-56 overflow-y-auto rounded-xl bg-gray-50 p-3 text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{contract ?? '載入中…'}</div>
+          <p className="text-xs text-gray-500">閱讀後請在下方簽名，簽名後的合約可在「我的 → 合約」查看。</p>
+          <SignaturePad onChange={setSig} />
+        </div>
+      )}
       {err && <p className="text-sm text-red-500">{err}</p>}
       <div className="card flex items-center justify-between">
         <div><div className="text-xs text-gray-400">應付金額</div><div className="text-xl font-bold text-gray-800">{money(amount)}</div>{quote?.discount ? <div className="text-xs text-gray-400 line-through">{money(plan.price)}</div> : null}</div>
-        <button className="btn-primary px-6 py-3" disabled={busy} onClick={buy}>{busy ? '處理中…' : method === 'ONLINE' ? '前往付款' : '建立訂單'}</button>
+        <button className="btn-primary px-6 py-3" disabled={busy || (shop.contractRequired && !sig)} onClick={buy}>{busy ? '處理中…' : method === 'TRANSFER' ? '建立訂單' : '前往付款'}</button>
       </div>
     </div>
   );
@@ -157,7 +202,10 @@ function PendingOrder({ o, shop, onChanged }: { o: Order; shop: Shop; onChanged:
     try { await memberApi.post(`/orders/${o.id}/transfer`, { last5, transferAt: date }); onChanged('已回報，教室核對入帳後會通知您'); } catch (e) { setErr(errorText(e)); }
   }
   async function pay() {
-    try { const f = await memberApi.post(`/orders/${o.id}/pay`); submitToEcpay(f.data.action, f.data.fields); } catch (e) { setErr(errorText(e)); }
+    try {
+      if (o.method === 'LINEPAY') { window.location.href = (await memberApi.post(`/orders/${o.id}/linepay`)).data.url; return; }
+      const f = await memberApi.post(`/orders/${o.id}/pay`); submitToEcpay(f.data.action, f.data.fields);
+    } catch (e) { setErr(errorText(e)); }
   }
   async function cancel() {
     if (!confirm('取消這筆訂單？')) return;
@@ -178,7 +226,7 @@ function PendingOrder({ o, shop, onChanged }: { o: Order; shop: Shop; onChanged:
         <button className="btn-primary w-full" disabled={last5.length !== 5} onClick={report}>回報轉帳</button>
       </>}
       {o.method === 'TRANSFER' && o.transferLast5 && <p className="text-xs text-gray-500">已回報帳號後五碼 {o.transferLast5}，教室核對入帳後會通知您。</p>}
-      {o.method === 'ONLINE' && <button className="btn-primary w-full" onClick={pay}>前往付款</button>}
+      {(o.method === 'ONLINE' || o.method === 'LINEPAY') && <button className="btn-primary w-full" onClick={pay}>前往{o.method === 'LINEPAY' ? ' LINE Pay ' : ''}付款</button>}
       {err && <p className="text-sm text-red-500">{err}</p>}
       <button className="text-xs text-gray-400 underline" onClick={cancel}>取消訂單</button>
     </div>

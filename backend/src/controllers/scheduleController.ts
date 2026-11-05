@@ -131,8 +131,9 @@ export async function getSession(req: AuthRequest, res: Response) {
   const s = await prisma.classSession.findFirst({
     where: { id: req.params.id, userId: req.userId! },
     include: {
-      classType: true, coach: true, branch: { select: { id: true, name: true } },
+      classType: true, coach: true, branch: { select: { id: true, name: true } }, originalCoach: { select: { id: true, name: true } },
       bookings: { include: { member: { select: { id: true, name: true, phone: true } }, membership: { select: { planName: true, kind: true, creditsLeft: true } } }, orderBy: { bookedAt: 'asc' } },
+      leaveRequests: { where: { status: 'PENDING' }, select: { id: true, reason: true, coach: { select: { name: true } } } },
     },
   });
   if (!s) throw notFound('找不到這堂課');

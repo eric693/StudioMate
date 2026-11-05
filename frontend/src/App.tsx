@@ -17,6 +17,10 @@ import Orders from './pages/Orders';
 import Marketing from './pages/Marketing';
 import Rentals from './pages/Rentals';
 import CheckInDisplay from './pages/CheckInDisplay';
+import Pos from './pages/Pos';
+import Access from './pages/Access';
+import Staff from './pages/Staff';
+import Clock from './pages/Clock';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -61,6 +65,10 @@ export default function App() {
                 <Route path="catalog" element={gated(<Catalog />)} />
                 <Route path="marketing" element={gated(<Marketing />)} />
                 <Route path="rentals" element={gated(<Rentals />)} />
+                <Route path="pos" element={gated(<Pos />)} />
+                <Route path="access" element={gated(<Access />)} />
+                <Route path="staff" element={gated(<Staff />)} />
+                <Route path="clock" element={<Clock />} />
                 <Route path="reports" element={gated(<Reports />)} />
                 <Route path="settings" element={gated(<Settings />)} />
                 <Route path="accounts" element={<Accounts />} />

@@ -36,7 +36,8 @@ if (fs.existsSync(FRONTEND_DIST)) {
   app.use(express.static(FRONTEND_DIST, {
     setHeaders: (res, file) => {
       // index.html 不快取才能即時拿到新版；assets 檔名含雜湊，可以長期快取
-      if (/index\.html$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
+      // index.html、Service Worker、manifest 不快取才能即時拿到新版
+      if (/(index\.html|sw\.js|\.webmanifest)$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
       else if (/[\\/]assets[\\/]/.test(file)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     },
   }));

@@ -80,8 +80,10 @@ export async function sendCampaign(req: AuthRequest, res: Response) {
   if (!list.length) throw badRequest('名單是空的');
   const c = await prisma.campaign.create({ data: { userId: req.userId!, name: d.name, segment: SEGMENTS[d.segment], message: d.message, total: list.length } });
   let sent = 0, sandbox = 0, skipped = 0;
+  // 沒綁 LINE 但有開手機通知的會員也送
+  const withPush = new Set((await prisma.pushSubscription.findMany({ where: { memberId: { in: list.map((m) => m.id) } }, select: { memberId: true } })).map((x) => x.memberId));
   for (const m of list) {
-    if (!m.lineBound) { skipped++; continue; }
+    if (!m.lineBound && !withPush.has(m.id)) { skipped++; continue; }
     const r = await notifyMember(req.userId!, m.id, 'CAMPAIGN', c.id, d.message.replace(/\{name\}/g, m.name));
     if (r === 'sent') sent++; else if (r === 'sandbox') sandbox++; else skipped++;
   }

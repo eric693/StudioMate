@@ -5,9 +5,56 @@ import api from '../api/client';
 import HowTo from '../components/HowTo';
 import SearchBox from '../components/SearchBox';
 import { Order } from '../types';
-import { ORDER_STATUS, dateTime, money } from '../lib/format';
+import { ORDER_METHOD, ORDER_STATUS, SUB_STATUS, dateTime, money } from '../lib/format';
+import { Tabs } from '../components/MemberPicker';
 
 export default function Orders() {
+  const [tab, setTab] = useState<'orders' | 'subs'>('orders');
+  return (
+    <div className="space-y-4">
+      <Tabs tabs={[['orders', '線上訂單'], ['subs', '定期定額']]} value={tab} onChange={setTab} />
+      {tab === 'orders' ? <OrderList /> : <Subscriptions />}
+    </div>
+  );
+}
+
+interface Sub { id: string; status: string; amount: number; successTimes: number; failTimes: number; lastPaidAt: string | null; lastError: string | null; createdAt: string; tradeNo: string; member: { id: string; name: string; phone: string }; plan: { name: string } }
+
+function Subscriptions() {
+  const [list, setList] = useState<Sub[] | null>(null);
+  const [status, setStatus] = useState('');
+  const load = () => api.get('/subscriptions', { params: { status: status || undefined } }).then((r) => setList(r.data));
+  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function cancel(s: Sub) {
+    if (!confirm(`停止 ${s.member.name} 的「${s.plan.name}」每月扣款？已購買的方案不受影響。`)) return;
+    await api.post(`/subscriptions/${s.id}/cancel`); load();
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <select className="input w-auto text-sm" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="狀態">
+          <option value="">全部狀態</option>{Object.entries(SUB_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <p className="text-xs text-gray-400">方案勾選「定期定額」並開放線上購買後，會員可選擇每月自動扣款。每期扣款成功會自動新增一張方案。</p>
+      </div>
+      <div className="card p-0 overflow-hidden divide-y divide-gray-50">
+        {list?.length === 0 && <p className="text-sm text-gray-400 p-4">沒有定期定額。</p>}
+        {list?.map((s) => (
+          <div key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+            <div className="flex-1 min-w-[14rem]">
+              <div className="text-sm text-gray-800"><Link to={`/members/${s.member.id}`} className="font-medium hover:text-brand">{s.member.name}</Link><span className="text-gray-500 ml-2">{s.plan.name}</span><span className={`text-[11px] px-1.5 py-0.5 rounded-full ml-2 ${SUB_STATUS[s.status].cls}`}>{SUB_STATUS[s.status].label}</span></div>
+              <div className="text-xs text-gray-400">每月 {money(s.amount)}・已扣 {s.successTimes} 期{s.lastPaidAt ? `・最近扣款 ${dateTime(s.lastPaidAt)}` : ''}・{s.tradeNo}</div>
+              {s.lastError && <div className="text-xs text-red-500">{s.lastError}</div>}
+            </div>
+            {['ACTIVE', 'PAST_DUE'].includes(s.status) && <button className="btn-secondary text-xs py-1" onClick={() => cancel(s)}>停止扣款</button>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OrderList() {
   const [list, setList] = useState<Order[] | null>(null);
   const [f, setF] = useState({ q: '', status: 'PENDING', method: '' });
   const [msg, setMsg] = useState('');
@@ -45,7 +92,7 @@ export default function Orders() {
           <option value="">全部狀態</option>{Object.entries(ORDER_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         <select className="input w-auto text-sm" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} aria-label="付款方式">
-          <option value="">全部付款方式</option><option value="ONLINE">線上刷卡</option><option value="TRANSFER">銀行轉帳</option>
+          <option value="">全部付款方式</option>{Object.entries(ORDER_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
       </div>
       <div className="card p-0 overflow-hidden">
@@ -62,7 +109,7 @@ export default function Orders() {
                       <span className={`text-[11px] px-1.5 py-0.5 rounded-full ml-2 ${ORDER_STATUS[o.status].cls}`}>{ORDER_STATUS[o.status].label}</span>
                     </div>
                     <div className="text-xs text-gray-400">
-                      {dateTime(o.createdAt)}・{o.method === 'ONLINE' ? '線上刷卡' : '銀行轉帳'}・{o.tradeNo}
+                      {dateTime(o.createdAt)}・{ORDER_METHOD[o.method]}{o.recurring ? '（定期定額）' : ''}・{o.tradeNo}
                       {o.coupon && `・折價券 ${o.coupon.code}（-${o.discount}）`}
                     </div>
                     {o.method === 'TRANSFER' && o.status === 'PENDING' && (

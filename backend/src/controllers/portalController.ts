@@ -69,7 +69,7 @@ export async function memberMe(req: MemberRequest, res: Response) {
       bookingWindowDays: studio.bookingWindowDays, timezone: studio.timezone, selfCheckIn: studio.selfCheckIn, invoiceEnabled: studio.invoiceEnabled,
       referralReward: studio.referralRewardAmount,
     },
-    features: { shop: shopPlans > 0 && (studio.onlinePayEnabled || studio.transferEnabled), private: privateTypes > 0, branches },
+    features: { shop: shopPlans > 0 && (studio.onlinePayEnabled || studio.transferEnabled || studio.linePayEnabled), private: privateTypes > 0, branches },
     terms: termsOutdated ? { text: studio.terms, version: studio.termsVersion } : null,
     suspendedUntil: suspended,
     passes,

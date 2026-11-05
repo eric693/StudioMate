@@ -23,12 +23,14 @@ model User {
   role        UserRole  @default(ADMIN)
   ownerId     String? // STAFF：所屬教室（管理員）id；ADMIN：null
   permissions String[]  @default([]) // STAFF 可進入的模組鍵；ADMIN 不受限
+  coachId     String? // 員工帳號對應的教練（教練自己申請請假）
   active      Boolean   @default(true)
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   owner User?  @relation("OwnerStaff", fields: [ownerId], references: [id], onDelete: Cascade)
+  coach Coach? @relation("StaffCoach", fields: [coachId], references: [id], onDelete: SetNull)
   staff User[] @relation("OwnerStaff")
 
   studio       Studio?
@@ -49,6 +51,27 @@ model User {
   campaigns    Campaign[]
   rooms        Room[]
   roomBookings RoomBooking[]
+
+  // 第三版
+  refunds       Refund[]
+  subscriptions Subscription[]
+  leaveRequests LeaveRequest[]
+  shifts        StaffShift[]     @relation("ShiftOwner")
+  myShifts      StaffShift[]     @relation("ShiftStaff")
+  clocks        TimeClock[]      @relation("ClockOwner")
+  myClocks      TimeClock[]      @relation("ClockStaff")
+  accessDevices AccessDevice[]
+  accessLogs    AccessLog[]
+  bodyMetrics   BodyMetric[]
+  lockers       Locker[]
+  lockerRentals LockerRental[]
+  contracts     Contract[]
+  products      Product[]
+  productSales  ProductSale[]
+  stockMoves    StockMove[]
+  announcements Announcement[]
+  surveys       Survey[]
+  surveyAnswers SurveyResponse[]
 }
 
 // 教室資料與營運規則（每個教室一筆）
@@ -99,6 +122,36 @@ model Studio {
   // 轉介紹：被介紹的新會員首次購買後，介紹人獲得的折價券金額（0＝不啟用）
   referralRewardAmount     Int     @default(0)
 
+  // 退費：解約時從應退金額扣除的手續費（%），依教室條款設定
+  refundFeePercent  Int     @default(0)
+  transferFee       Int     @default(0) // 會籍轉讓手續費
+  // 預收款履約保障（信託或銀行履約保證），顯示在購買頁與合約
+  trustType         String? // TRUST（信託）| GUARANTEE（銀行履約保證）| 空＝未提供
+  trustBank         String?
+  trustNote         String?
+  // 線上付款：信用卡分期（例如 "3,6,12"）與最低分期金額
+  installments      String?
+  installmentMin    Int     @default(0)
+  // LINE Pay 線上付款
+  linePayEnabled    Boolean @default(false)
+  linePayMode       String  @default("sandbox") // sandbox | production
+  linePayChannelId  String?
+  linePaySecret     String?
+  // 電子合約：購買方案時需簽署
+  contractEnabled   Boolean @default(false)
+  contractText      String?
+  // 自動行銷
+  birthdayEnabled   Boolean @default(false)
+  birthdayMessage   String?
+  birthdayCoupon    Int     @default(0)
+  winbackEnabled    Boolean @default(false)
+  winbackDays       Int     @default(30)
+  winbackMessage    String?
+  winbackCoupon     Int     @default(0)
+  // 門禁：入場時若有預約中的課，自動簽到
+  accessAutoCheckIn Boolean @default(true)
+  accessSecret      String  @default(dbgenerated("replace(gen_random_uuid()::text, '-', '')"))
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -133,14 +186,23 @@ model Member {
   invoiceTitle          String?
   createdAt             DateTime     @default(now())
 
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  memberships  Membership[]
-  bookings     Booking[]
-  referredBy   Member?            @relation("Referral", fields: [referredById], references: [id], onDelete: SetNull)
-  referrals    Member[]           @relation("Referral")
-  orders       Order[]
-  redemptions  CouponRedemption[]
-  roomBookings RoomBooking[]
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberships   Membership[]
+  bookings      Booking[]
+  referredBy    Member?            @relation("Referral", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals     Member[]           @relation("Referral")
+  orders        Order[]
+  redemptions   CouponRedemption[]
+  roomBookings  RoomBooking[]
+  refunds       Refund[]
+  subscriptions Subscription[]
+  accessLogs    AccessLog[]
+  bodyMetrics   BodyMetric[]
+  lockerRentals LockerRental[]
+  contracts     Contract[]
+  productSales  ProductSale[]
+  surveyAnswers SurveyResponse[]
+  pushSubs      PushSubscription[]
 
   @@unique([userId, phone])
   @@unique([userId, lineUserId])
@@ -179,12 +241,18 @@ model Coach {
   payPerHead    Int      @default(0)
   headThreshold Int      @default(0)
   revenueShare  Int      @default(0)
+  // 階梯式抽成：[{ min: 月產值門檻, rate: % }]，依當月總產值達到的最高門檻套用；空＝使用固定 revenueShare
+  shareTiers    Json?
   createdAt     DateTime @default(now())
 
-  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  templates    ScheduleTemplate[]
-  sessions     ClassSession[]
-  availability CoachAvailability[]
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templates     ScheduleTemplate[]
+  sessions      ClassSession[]      @relation("SessionCoach")
+  originals     ClassSession[]      @relation("SessionOriginalCoach")
+  availability  CoachAvailability[]
+  leaveRequests LeaveRequest[]      @relation("LeaveCoach")
+  substitutions LeaveRequest[]      @relation("LeaveSubstitute")
+  staffAccounts User[]              @relation("StaffCoach")
 
   @@unique([userId, name])
 }
@@ -209,11 +277,13 @@ model Plan {
   onlineSale   Boolean  @default(false) // 開放會員線上購買
   trialOnly    Boolean  @default(false) // 體驗方案：限沒有購買紀錄的會員購買一次
   description  String?
+  recurring    Boolean  @default(false) // 定期定額：線上購買時每期自動扣款續約（期限卡適用）
   createdAt    DateTime @default(now())
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  memberships Membership[]
-  orders      Order[]
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberships   Membership[]
+  orders        Order[]
+  subscriptions Subscription[]
 
   @@unique([userId, name])
 }
@@ -223,6 +293,8 @@ enum MembershipStatus {
   FROZEN
   EXPIRED
   CANCELLED
+  REFUNDED // 已退費解約
+  TRANSFERRED // 已轉讓給其他會員
 }
 
 enum PayMethod {
@@ -235,40 +307,47 @@ enum PayMethod {
 
 // 會員購買的方案（一次購買一筆）。方案內容在購買時複製一份，之後修改方案不影響已售出的
 model Membership {
-  id            String           @id @default(cuid())
-  userId        String
-  memberId      String
-  planId        String
-  planName      String
-  kind          PlanKind
-  creditsTotal  Int?
-  creditsLeft   Int?
-  classTypeIds  String[]         @default([])
-  dailyLimit    Int?
-  startDate     DateTime         @db.Date
-  endDate       DateTime         @db.Date
-  status        MembershipStatus @default(ACTIVE)
-  frozenFrom    DateTime?        @db.Date
-  frozenUntil   DateTime?        @db.Date
-  price         Int
-  payMethod     PayMethod        @default(CASH)
-  paidAt        DateTime         @default(now())
-  note          String?
-  discount      Int              @default(0) // 折價券折抵金額
-  couponId      String?
+  id                String           @id @default(cuid())
+  userId            String
+  memberId          String
+  planId            String
+  planName          String
+  kind              PlanKind
+  creditsTotal      Int?
+  creditsLeft       Int?
+  classTypeIds      String[]         @default([])
+  dailyLimit        Int?
+  startDate         DateTime         @db.Date
+  endDate           DateTime         @db.Date
+  status            MembershipStatus @default(ACTIVE)
+  frozenFrom        DateTime?        @db.Date
+  frozenUntil       DateTime?        @db.Date
+  price             Int
+  payMethod         PayMethod        @default(CASH)
+  paidAt            DateTime         @default(now())
+  note              String?
+  discount          Int              @default(0) // 折價券折抵金額
+  couponId          String?
   // 電子發票
-  invoiceNo     String?
-  invoiceDate   DateTime?
-  invoiceRandom String?
-  invoiceStatus String? // ISSUED | VOID | FAILED
-  invoiceError  String?
-  createdAt     DateTime         @default(now())
+  invoiceNo         String?
+  invoiceDate       DateTime?
+  invoiceRandom     String?
+  invoiceStatus     String? // ISSUED | VOID | FAILED
+  invoiceError      String?
+  // 轉讓：由哪張方案轉入；unitValue＝原方案的每堂（或每日）價值，讓轉入後的教練產值與預收款計算正確
+  transferredFromId String?
+  valueBase         Int? // 計算產值與預收款用的金額；空＝price
+  subscriptionId    String?
+  createdAt         DateTime         @default(now())
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  member   Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  plan     Plan      @relation(fields: [planId], references: [id], onDelete: Restrict)
-  order    Order?
-  bookings Booking[]
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member       Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  plan         Plan          @relation(fields: [planId], references: [id], onDelete: Restrict)
+  order        Order?
+  bookings     Booking[]
+  refunds      Refund[]
+  contracts    Contract[]
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   @@index([userId, memberId, status])
   @@index([userId, endDate])
@@ -306,29 +385,34 @@ enum SessionStatus {
 }
 
 model ClassSession {
-  id           String        @id @default(cuid())
-  userId       String
-  classTypeId  String
-  coachId      String?
-  templateId   String?
-  startsAt     DateTime
-  endsAt       DateTime
-  capacity     Int
-  room         String?
-  status       SessionStatus @default(SCHEDULED)
-  cancelReason String?
-  note         String?
-  branchId     String?
-  liveUrl      String? // 直播連結：只有已預約的會員在開課前後看得到
-  isPrivate    Boolean       @default(false) // 私人課（會員依教練空檔預約時建立）
-  createdAt    DateTime      @default(now())
+  id              String        @id @default(cuid())
+  userId          String
+  classTypeId     String
+  coachId         String?
+  templateId      String?
+  startsAt        DateTime
+  endsAt          DateTime
+  capacity        Int
+  room            String?
+  status          SessionStatus @default(SCHEDULED)
+  cancelReason    String?
+  note            String?
+  branchId        String?
+  liveUrl         String? // 直播連結：只有已預約的會員在開課前後看得到
+  isPrivate       Boolean       @default(false) // 私人課（會員依教練空檔預約時建立）
+  originalCoachId String? // 代課：原本的教練
+  substituteNote  String?
+  createdAt       DateTime      @default(now())
 
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  classType ClassType         @relation(fields: [classTypeId], references: [id], onDelete: Restrict)
-  coach     Coach?            @relation(fields: [coachId], references: [id], onDelete: SetNull)
-  template  ScheduleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  branch    Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  bookings  Booking[]
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classType     ClassType         @relation(fields: [classTypeId], references: [id], onDelete: Restrict)
+  coach         Coach?            @relation("SessionCoach", fields: [coachId], references: [id], onDelete: SetNull)
+  originalCoach Coach?            @relation("SessionOriginalCoach", fields: [originalCoachId], references: [id], onDelete: SetNull)
+  leaveRequests LeaveRequest[]
+  surveyAnswers SurveyResponse[]
+  template      ScheduleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  branch        Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  bookings      Booking[]
 
   @@unique([templateId, startsAt]) // 同一固定課表同一時段只會產生一堂，重複執行不會重複建立
   @@index([userId, startsAt])
@@ -425,6 +509,7 @@ model CoachAvailability {
 enum OrderMethod {
   ONLINE // 綠界線上付款
   TRANSFER // 銀行轉帳，櫃檯審核
+  LINEPAY // LINE Pay 線上付款
 }
 
 enum OrderStatus {
@@ -455,6 +540,9 @@ model Order {
   paidAt          DateTime?
   rejectReason    String?
   membershipId    String?     @unique
+  recurring       Boolean     @default(false) // 定期定額首期
+  installment     Int? // 信用卡分期期數（綠界回傳）
+  contractId      String?
   createdAt       DateTime    @default(now())
 
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -579,4 +667,382 @@ model RoomBooking {
 
   @@index([userId, startsAt])
   @@index([roomId, startsAt])
+}
+
+// ────────────── 第三版：退費、定期定額、代課、員工、門禁、置物櫃、體測、合約、零售、公告、問卷 ──────────────
+
+// 退費紀錄：解約退款（退費日當天從營收扣除）
+model Refund {
+  id            String    @id @default(cuid())
+  userId        String
+  memberId      String
+  membershipId  String
+  amount        Int // 實退金額
+  usedValue     Int // 已使用的價值
+  fee           Int // 手續費
+  method        PayMethod @default(CASH)
+  reason        String?
+  allowanceNo   String? // 發票折讓單號（部分退費時開立）
+  invoiceAction String? // VOID（作廢）| ALLOWANCE（折讓）| NONE
+  createdById   String?
+  createdAt     DateTime  @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member     Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE // 扣款失敗
+  CANCELLED
+  ENDED // 期數扣完
+}
+
+// 定期定額（綠界信用卡定期扣款）：每期扣款成功自動續一張方案
+model Subscription {
+  id           String             @id @default(cuid())
+  userId       String
+  memberId     String
+  planId       String
+  tradeNo      String             @unique // 綠界首期交易編號（之後每期以此識別）
+  amount       Int
+  execTimes    Int // 總期數
+  successTimes Int                @default(0)
+  failTimes    Int                @default(0)
+  status       SubscriptionStatus @default(ACTIVE)
+  lastPaidAt   DateTime?
+  lastError    String?
+  cancelledAt  DateTime?
+  createdAt    DateTime           @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member      Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  plan        Plan         @relation(fields: [planId], references: [id], onDelete: Restrict)
+  memberships Membership[]
+
+  @@index([userId, status])
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// 教練請假／代課申請
+model LeaveRequest {
+  id           String      @id @default(cuid())
+  userId       String
+  sessionId    String
+  coachId      String
+  reason       String?
+  status       LeaveStatus @default(PENDING)
+  substituteId String?
+  reviewNote   String?
+  createdById  String?
+  reviewedAt   DateTime?
+  createdAt    DateTime    @default(now())
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session    ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  coach      Coach        @relation("LeaveCoach", fields: [coachId], references: [id], onDelete: Cascade)
+  substitute Coach?       @relation("LeaveSubstitute", fields: [substituteId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+}
+
+// 員工班表
+model StaffShift {
+  id        String   @id @default(cuid())
+  userId    String // 教室
+  staffId   String // 員工或管理員帳號
+  date      DateTime @db.Date
+  startTime String
+  endTime   String
+  note      String?
+  createdAt DateTime @default(now())
+
+  owner User @relation("ShiftOwner", fields: [userId], references: [id], onDelete: Cascade)
+  staff User @relation("ShiftStaff", fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+// 打卡紀錄
+model TimeClock {
+  id        String    @id @default(cuid())
+  userId    String
+  staffId   String
+  clockIn   DateTime
+  clockOut  DateTime?
+  note      String?
+  createdAt DateTime  @default(now())
+
+  owner User @relation("ClockOwner", fields: [userId], references: [id], onDelete: Cascade)
+  staff User @relation("ClockStaff", fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([userId, clockIn])
+  @@index([staffId, clockIn])
+}
+
+// 門禁裝置：閘門、電子鎖或櫃檯掃碼器。裝置用 token 呼叫入場驗證 API
+model AccessDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  branchId   String?
+  name       String
+  token      String    @unique
+  active     Boolean   @default(true)
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs AccessLog[]
+}
+
+model AccessLog {
+  id        String   @id @default(cuid())
+  userId    String
+  memberId  String?
+  deviceId  String?
+  allowed   Boolean
+  reason    String
+  createdAt DateTime @default(now())
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member Member?       @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  device AccessDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([memberId, createdAt])
+}
+
+// 體組成（InBody 等）量測紀錄
+model BodyMetric {
+  id          String   @id @default(cuid())
+  userId      String
+  memberId    String
+  measuredAt  DateTime @db.Date
+  heightCm    Float?
+  weightKg    Float?
+  bodyFatPct  Float?
+  muscleKg    Float?
+  visceralFat Float?
+  bmr         Int?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, measuredAt])
+}
+
+// 置物櫃
+model Locker {
+  id          String   @id @default(cuid())
+  userId      String
+  branchId    String?
+  code        String
+  size        String?
+  monthlyRate Int      @default(0)
+  active      Boolean  @default(true)
+  note        String?
+  createdAt   DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rentals LockerRental[]
+
+  @@unique([userId, code])
+}
+
+enum LockerRentalStatus {
+  ACTIVE
+  ENDED
+}
+
+model LockerRental {
+  id        String             @id @default(cuid())
+  userId    String
+  lockerId  String
+  memberId  String
+  startDate DateTime           @db.Date
+  endDate   DateTime           @db.Date
+  price     Int                @default(0)
+  payMethod PayMethod          @default(CASH)
+  status    LockerRentalStatus @default(ACTIVE)
+  note      String?
+  createdAt DateTime           @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locker Locker @relation(fields: [lockerId], references: [id], onDelete: Restrict)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, endDate])
+}
+
+// 電子合約：簽署當下的條文與簽名都存一份，之後修改範本不影響已簽的合約
+model Contract {
+  id           String   @id @default(cuid())
+  userId       String
+  memberId     String
+  membershipId String?
+  title        String
+  content      String
+  signerName   String
+  signature    String // 手寫簽名 PNG（data URL）
+  signedAt     DateTime @default(now())
+  signedIp     String?
+  channel      String // FRONT_DESK（櫃檯）| ONLINE（會員線上）
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member     Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  membership Membership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+
+  @@index([memberId])
+}
+
+// 商品零售
+model Product {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  category   String?
+  sku        String?
+  price      Int
+  cost       Int?
+  stock      Int      @default(0)
+  trackStock Boolean  @default(true)
+  lowStock   Int      @default(0) // 庫存低於等於此數量時提示
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items ProductSaleItem[]
+  moves StockMove[]
+
+  @@unique([userId, name])
+}
+
+enum SaleStatus {
+  PAID
+  VOID
+}
+
+model ProductSale {
+  id            String     @id @default(cuid())
+  userId        String
+  memberId      String?
+  total         Int
+  discount      Int        @default(0)
+  payMethod     PayMethod  @default(CASH)
+  status        SaleStatus @default(PAID)
+  note          String?
+  invoiceNo     String?
+  invoiceDate   DateTime?
+  invoiceStatus String?
+  invoiceError  String?
+  createdById   String?
+  createdAt     DateTime   @default(now())
+
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member Member?           @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  items  ProductSaleItem[]
+
+  @@index([userId, createdAt])
+}
+
+model ProductSaleItem {
+  id        String @id @default(cuid())
+  saleId    String
+  productId String
+  name      String
+  price     Int
+  qty       Int
+
+  sale    ProductSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+}
+
+// 庫存異動：進貨、盤點調整、銷售、作廢回補
+model StockMove {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  qty       Int // 正數入庫、負數出庫
+  reason    String // RESTOCK | ADJUST | SALE | VOID
+  saleId    String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+}
+
+// 公告：會員端首頁顯示，可同時推播 LINE
+model Announcement {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  pinned    Boolean   @default(false)
+  expiresAt DateTime? @db.Date
+  pushed    Int       @default(0) // 推播人數
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// 滿意度問卷：questions＝[{ id, type: rating|text|choice, label, options? }]
+model Survey {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  questions  Json
+  active     Boolean  @default(true)
+  afterClass Boolean  @default(false) // 下課後自動邀請出席會員填寫
+  createdAt  DateTime @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responses SurveyResponse[]
+}
+
+model SurveyResponse {
+  id        String   @id @default(cuid())
+  userId    String
+  surveyId  String
+  memberId  String
+  sessionId String?
+  answers   Json
+  createdAt DateTime @default(now())
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  survey  Survey        @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  member  Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  session ClassSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@unique([surveyId, memberId, sessionId])
+}
+
+// 會員手機的推播訂閱（加到主畫面的 Web App）：一位會員可有多台裝置
+model PushSubscription {
+  id         String    @id @default(cuid())
+  memberId   String
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
 }

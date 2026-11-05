@@ -109,7 +109,7 @@ async function rewardReferrer(userId: string, memberId: string) {
 
 /* ---------- 電子發票 ---------- */
 
-export async function issueMembershipInvoice(userId: string, membershipId: string) {
+export async function issueMembershipInvoice(userId: string, membershipId: string, itemName?: string) {
   const ms = await prisma.membership.findFirst({ where: { id: membershipId, userId }, include: { member: true } });
   if (!ms) throw notFound('找不到方案');
   if (ms.invoiceStatus === 'ISSUED') throw conflict('這筆已經開立發票');
@@ -119,7 +119,7 @@ export async function issueMembershipInvoice(userId: string, membershipId: strin
     const r = await issueInvoice(invoiceCreds(studio), {
       relateNumber: `SM${ms.id.slice(-12)}${Date.now().toString(36).slice(-4)}`.toUpperCase().slice(0, 30),
       amount: ms.price,
-      itemName: ms.planName,
+      itemName: itemName ?? ms.planName,
       buyer: {
         name: ms.member.name, email: ms.member.email, phone: ms.member.phone,
         carrierType: ms.member.invoiceCarrierType, carrierNum: ms.member.invoiceCarrierNum, taxId: ms.member.invoiceTaxId, title: ms.member.invoiceTitle,
@@ -153,20 +153,25 @@ export async function voidMembershipInvoice(userId: string, membershipId: string
 export const newTradeNo = () => `SM${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(3).toString('hex').toUpperCase()}`.slice(0, 20);
 
 /** 會員下單：檢查方案開放線上購買、付款方式已啟用、體驗方案與折價券；同時只能有一筆待處理的同方案訂單 */
-export async function createOrder(userId: string, memberId: string, input: { planId: string; method: 'ONLINE' | 'TRANSFER'; couponCode?: string | null }) {
+export async function createOrder(userId: string, memberId: string, input: { planId: string; method: 'ONLINE' | 'TRANSFER' | 'LINEPAY'; couponCode?: string | null; recurring?: boolean }) {
   const studio = await getStudio(userId);
   const plan = await prisma.plan.findFirst({ where: { id: input.planId, userId, active: true, onlineSale: true } });
   if (!plan) throw notFound('這個方案沒有開放線上購買');
   if (input.method === 'ONLINE' && !studio.onlinePayEnabled) throw badRequest('教室尚未開放線上付款');
   if (input.method === 'TRANSFER' && !studio.transferEnabled) throw badRequest('教室尚未開放轉帳付款');
+  if (input.method === 'LINEPAY' && !(studio.linePayEnabled && studio.linePayChannelId && studio.linePaySecret)) throw badRequest('教室尚未開放 LINE Pay 付款');
+  const recurring = Boolean(input.recurring && plan.recurring);
+  if (input.recurring && !plan.recurring) throw badRequest('這個方案沒有開放定期定額');
+  if (recurring && input.method !== 'ONLINE') throw badRequest('定期定額只能用信用卡付款');
+  if (recurring && input.couponCode) throw badRequest('定期定額方案不能使用折價券');
   await assertTrialAllowed(memberId, plan);
   const quote = await quoteCoupon(userId, memberId, plan, input.couponCode);
   // 舊的未付款線上訂單直接作廢，避免重複
-  await prisma.order.updateMany({ where: { memberId, planId: plan.id, status: 'PENDING', method: 'ONLINE' }, data: { status: 'CANCELLED' } });
+  await prisma.order.updateMany({ where: { memberId, planId: plan.id, status: 'PENDING', method: { in: ['ONLINE', 'LINEPAY'] } }, data: { status: 'CANCELLED' } });
   return prisma.order.create({
     data: {
       userId, memberId, planId: plan.id, tradeNo: newTradeNo(), method: input.method,
-      originalAmount: plan.price, discount: quote.discount, amount: quote.amount, couponId: quote.coupon?.id ?? null,
+      originalAmount: plan.price, discount: quote.discount, amount: quote.amount, couponId: quote.coupon?.id ?? null, recurring,
     },
     include: { plan: true },
   });
@@ -181,7 +186,8 @@ export async function fulfillOrder(orderId: string, info: { providerTradeNo?: st
   try {
     ms = await completeSale(order.userId, {
       memberId: order.memberId, planId: order.planId, price: order.amount,
-      payMethod: order.method === 'TRANSFER' ? 'TRANSFER' : 'CARD', note: `線上訂單 ${order.tradeNo}`,
+      payMethod: order.method === 'TRANSFER' ? 'TRANSFER' : order.method === 'LINEPAY' ? 'LINEPAY' : 'CARD',
+      note: `${order.recurring ? '定期定額首期・' : ''}線上訂單 ${order.tradeNo}`,
     }, { quote: { coupon: order.coupon, discount: order.discount, amount: order.amount } });
   } catch (e) {
     // 付款已完成但建立方案失敗（例如方案剛被停售）：保留為已付款並記錄，由櫃檯手動處理
@@ -189,6 +195,11 @@ export async function fulfillOrder(orderId: string, info: { providerTradeNo?: st
     throw e;
   }
   const done = await prisma.order.update({ where: { id: order.id }, data: { membershipId: ms.id } });
+  if (order.contractId) await prisma.contract.updateMany({ where: { id: order.contractId, membershipId: null }, data: { membershipId: ms.id } });
+  if (order.recurring) {
+    const { startSubscription } = await import('./financeService');
+    await startSubscription(order, ms.id).catch((e) => console.error('[subscription] start', e));
+  }
   const studio = await getStudio(order.userId);
   await notifyMember(order.userId, order.memberId, 'ORDER_PAID', order.id,
     `付款完成！「${order.plan.name}」已加入您的帳戶，現在就可以預約課程。— ${studio.name}`).catch(() => undefined);
@@ -204,9 +215,12 @@ export async function rejectOrder(userId: string, orderId: string, reason: strin
   return done;
 }
 
+const base = () => config.appUrl.replace(/\/$/, '');
 export const paymentUrls = (orderId: string) => ({
-  notifyUrl: `${config.appUrl.replace(/\/$/, '')}/api/pay/ecpay/notify`,
-  backUrl: `${config.appUrl.replace(/\/$/, '')}/m?order=${orderId}`,
+  notifyUrl: `${base()}/api/pay/ecpay/notify`,
+  backUrl: `${base()}/m?order=${orderId}`,
+  periodUrl: `${base()}/api/pay/ecpay/period`,
+  linePayConfirmUrl: `${base()}/api/pay/linepay/confirm?order=${orderId}`,
 });
 
 export const todayDate = async (userId: string) => dateOnly(localDate(new Date(), (await getStudio(userId)).timezone));

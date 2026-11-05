@@ -80,6 +80,7 @@ export default function Catalog() {
                 title={<>{p.name}<span className="text-xs bg-gray-100 text-gray-500 px-1.5 rounded ml-2">{PLAN_KIND[p.kind]}</span>
                   {p.onlineSale && <span className="text-xs bg-green-50 text-green-600 px-1.5 rounded ml-1">線上販售</span>}
                   {p.trialOnly && <span className="text-xs bg-amber-50 text-amber-600 px-1.5 rounded ml-1">體驗</span>}
+                  {p.recurring && <span className="text-xs bg-sky-50 text-sky-600 px-1.5 rounded ml-1">月扣</span>}
                   {!p.active && <span className="text-xs text-gray-400 ml-2">停售</span>}</>}
                 sub={`${p.kind === 'PERIOD' ? `不限堂數${p.dailyLimit ? `・每日 ${p.dailyLimit} 堂` : ''}` : `${p.credits} 堂`}・${p.validDays} 天有效${p.classTypeIds.length ? `・限 ${typeName(p.classTypeIds)}` : ''}`}
                 right={<span className="font-semibold text-gray-700">{money(p.price)}</span>} />
@@ -115,7 +116,7 @@ export default function Catalog() {
 }
 
 const payRule = (c: Coach) => [
-  c.payPerClass ? `每堂 ${c.payPerClass}` : '', c.payPerHead ? `超過 ${c.headThreshold} 人每人 +${c.payPerHead}` : '', c.revenueShare ? `抽成 ${c.revenueShare}%` : '',
+  c.payPerClass ? `每堂 ${c.payPerClass}` : '', c.payPerHead ? `超過 ${c.headThreshold} 人每人 +${c.payPerHead}` : '', c.shareTiers?.length ? `階梯抽成 ${c.shareTiers.map((t) => `${t.rate}%`).join('→')}` : c.revenueShare ? `抽成 ${c.revenueShare}%` : '',
 ].filter(Boolean).join('、');
 
 const Empty = ({ text }: { text: string }) => <p className="text-sm text-gray-400 p-4">{text}</p>;
@@ -153,7 +154,7 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
   const [f, setF] = useState({
     name: p?.name ?? '', kind: (p?.kind ?? 'PACK') as PlanKind, credits: String(p?.credits ?? 10), validDays: String(p?.validDays ?? 90),
     price: String(p?.price ?? ''), dailyLimit: String(p?.dailyLimit ?? ''), classTypeIds: p?.classTypeIds ?? [], active: p?.active ?? true,
-    onlineSale: p?.onlineSale ?? false, trialOnly: p?.trialOnly ?? false, description: p?.description ?? '',
+    onlineSale: p?.onlineSale ?? false, trialOnly: p?.trialOnly ?? false, description: p?.description ?? '', recurring: p?.recurring ?? false,
   });
   function setKind(kind: PlanKind) {
     setF((x) => ({ ...x, kind, ...(p ? {} : kind === 'PERIOD' ? { validDays: '30' } : kind === 'DROPIN' ? { validDays: '30' } : { validDays: '90' }) }));
@@ -163,7 +164,7 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
     e.preventDefault();
     const body = {
       name: f.name, kind: f.kind, validDays: +f.validDays, price: +f.price, classTypeIds: f.classTypeIds, active: f.active,
-      onlineSale: f.onlineSale, trialOnly: f.trialOnly, description: f.description || null,
+      onlineSale: f.onlineSale, trialOnly: f.trialOnly, description: f.description || null, recurring: f.kind === 'PERIOD' && f.recurring,
       credits: f.kind === 'PACK' ? +f.credits : null, dailyLimit: f.kind === 'PERIOD' && f.dailyLimit ? +f.dailyLimit : null,
     };
     if (p) await api.put(`/plans/${p.id}`, body); else await api.post('/plans', body);
@@ -199,6 +200,7 @@ function PlanForm({ p, types, onClose, onSaved }: { p: Plan | null; types: Class
         <Active value={f.active} onChange={(v) => setF({ ...f, active: v })} label="販售中" />
         <Active value={f.onlineSale} onChange={(v) => setF({ ...f, onlineSale: v })} label="開放會員在手機網頁購買" />
         <Active value={f.trialOnly} onChange={(v) => setF({ ...f, trialOnly: v })} label="體驗方案：限沒有購買紀錄的會員購買一次" />
+        {f.kind === 'PERIOD' && <Active value={f.recurring} onChange={(v) => setF({ ...f, recurring: v })} label="開放定期定額：會員線上刷卡後每月自動扣款續約（需開放線上購買）" />}
         <button className="btn-primary w-full">儲存</button>
       </form>
     </Modal>
@@ -241,10 +243,12 @@ function CoachForm({ c, onClose, onSaved }: { c: Coach | null; onClose: () => vo
     payPerClass: String(c?.payPerClass ?? 0), payPerHead: String(c?.payPerHead ?? 0), headThreshold: String(c?.headThreshold ?? 0), revenueShare: String(c?.revenueShare ?? 0),
   });
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [tiers, setTiers] = useState<{ min: string; rate: string }[]>((c?.shareTiers ?? []).map((t) => ({ min: String(t.min), rate: String(t.rate) })));
   useEffect(() => { if (c) api.get(`/coaches/${c.id}/availability`).then((r) => setSlots(r.data)); }, [c]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const body = { ...f, phone: f.phone || null, payPerClass: +f.payPerClass || 0, payPerHead: +f.payPerHead || 0, headThreshold: +f.headThreshold || 0, revenueShare: +f.revenueShare || 0 };
+    const shareTiers = tiers.filter((t) => t.min !== '' && t.rate !== '').map((t) => ({ min: +t.min, rate: +t.rate }));
+    const body = { ...f, phone: f.phone || null, payPerClass: +f.payPerClass || 0, payPerHead: +f.payPerHead || 0, headThreshold: +f.headThreshold || 0, revenueShare: +f.revenueShare || 0, shareTiers: shareTiers.length ? shareTiers : null };
     const saved = c ? (await api.put(`/coaches/${c.id}`, body)).data : (await api.post('/coaches', body)).data;
     await api.put(`/coaches/${saved.id}/availability`, { slots: slots.map(({ weekday, startTime, endTime }) => ({ weekday, startTime, endTime })) });
     onSaved();
@@ -264,6 +268,20 @@ function CoachForm({ c, onClose, onSaved }: { c: Coach | null; onClose: () => vo
             <Field label="超過門檻每人加給"><input type="number" min={0} className="input" value={f.payPerHead} onChange={(e) => setF({ ...f, payPerHead: e.target.value })} /></Field>
           </div>
           <p className="text-xs text-gray-400 mt-1">例：每堂 800、超過 8 人每人加 50、不抽成。課程產值＝出席學員所用方案的每堂單價加總。</p>
+          <div className="mt-3">
+            <div className="text-xs font-medium text-gray-500">階梯式抽成（選填，設定後取代上面的固定 %）</div>
+            <p className="text-xs text-gray-400">依當月總產值達到的最高門檻，整月套用該 %。例：0 起 10%、5 萬起 15%、10 萬起 20%。</p>
+            {tiers.map((t, i) => (
+              <div key={i} className="flex items-center gap-2 mt-1.5 text-sm">
+                <input type="number" min={0} className="input w-32" value={t.min} onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, min: e.target.value } : x)))} placeholder="月產值門檻" aria-label="月產值門檻" />
+                <span className="text-gray-400">元起</span>
+                <input type="number" min={0} max={100} className="input w-20" value={t.rate} onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, rate: e.target.value } : x)))} aria-label="抽成 %" />
+                <span className="text-gray-400">%</span>
+                <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setTiers(tiers.filter((_, j) => j !== i))}>移除</button>
+              </div>
+            ))}
+            <button type="button" className="text-xs text-brand mt-1.5" onClick={() => setTiers([...tiers, { min: tiers.length ? '' : '0', rate: '' }])}>＋ 新增級距</button>
+          </div>
         </div>
         <AvailabilityEditor slots={slots} onChange={setSlots} />
         <Active value={f.active} onChange={(v) => setF({ ...f, active: v })} label="在職" />

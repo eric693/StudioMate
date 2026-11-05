@@ -6,6 +6,8 @@ import { Me } from './types';
 import ScheduleTab, { BookingsTab } from './ScheduleTab';
 import ShopTab from './ShopTab';
 import MeTab from './MeTab';
+import { AnnouncementBar } from './MoreSections';
+import { registerServiceWorker } from './pwa';
 import { passText } from '../../lib/format';
 
 declare global { interface Window { liff?: { init(o: { liffId: string }): Promise<void>; isLoggedIn(): boolean; login(): void; getAccessToken(): string | null } } }
@@ -21,7 +23,29 @@ function takeUrlParams() {
   return { order };
 }
 
+/** 會員端可加到手機主畫面（像 App 一樣全螢幕開啟） */
+function useInstallable() {
+  useEffect(() => {
+    const add = (tag: string, attrs: Record<string, string>) => {
+      const el = document.createElement(tag);
+      Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+      document.head.appendChild(el);
+      return el;
+    };
+    const els = [
+      add('link', { rel: 'manifest', href: '/member.webmanifest' }),
+      add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }),
+      add('meta', { name: 'apple-mobile-web-app-title', content: '會員預約' }),
+      add('meta', { name: 'theme-color', content: '#d9573b' }),
+      add('link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }),
+    ];
+    registerServiceWorker();
+    return () => els.forEach((e) => e.remove());
+  }, []);
+}
+
 export default function Portal() {
+  useInstallable();
   const [token, setToken] = useState(() => localStorage.getItem(MEMBER_TOKEN));
   const [params] = useState(takeUrlParams);
   if (!token) return <MemberLogin onLogin={(t) => { localStorage.setItem(MEMBER_TOKEN, t); setToken(t); }} />;
@@ -88,6 +112,14 @@ function MemberHome({ onLogout, orderId }: { onLogout: () => void; orderId: stri
   const [tab, setTab] = useState<Tab>(orderId ? 'shop' : 'schedule');
   const [toast, setToast] = useState('');
   const [checkIn, setCheckIn] = useState<{ ok: boolean; text: string } | null>(null);
+  // 斷線提示；恢復連線時重新載入會員資料
+  const [offline, setOffline] = useState(typeof navigator !== 'undefined' && !navigator.onLine);
+  useEffect(() => {
+    const on = () => { setOffline(false); loadMe(); };
+    const off = () => setOffline(true);
+    window.addEventListener('online', on); window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const loadMe = useCallback(() => memberApi.get('/me').then((r) => { setTimeZone(r.data.studio.timezone); setMe(r.data); }), []);
   useEffect(() => { loadMe(); }, [loadMe]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 3500); return () => clearTimeout(t); }, [toast]);
@@ -123,7 +155,9 @@ function MemberHome({ onLogout, orderId }: { onLogout: () => void; orderId: stri
         </div>
         {me.suspendedUntil && <div className="mt-2 text-xs bg-white/20 rounded-lg px-2 py-1">因近期未到課，線上預約暫停至 {dateTime(me.suspendedUntil)}，如需預約請聯絡教室</div>}
       </header>
-      <main className="px-4 py-4 pb-24">
+      {offline && <div className="bg-gray-800 text-white text-xs text-center py-1.5">目前離線，畫面可能不是最新狀態；連線後會自動更新</div>}
+      <main className="px-4 py-4 pb-24 space-y-3">
+        {tab === 'schedule' && <AnnouncementBar />}
         {tab === 'schedule' && <ScheduleTab me={me} onChange={notify} />}
         {tab === 'bookings' && <BookingsTab me={me} onChange={notify} />}
         {tab === 'shop' && <ShopTab me={me} orderId={orderId} onChange={notify} />}

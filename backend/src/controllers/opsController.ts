@@ -178,21 +178,28 @@ export async function coachPayReport(userId: string, month: string) {
   const unit = (b: (typeof sessions)[number]['bookings'][number]) => {
     const ms = b.membership;
     if (!ms) return 0;
-    if (ms.kind === 'PERIOD') return ms.price / Math.max(1, periodUse[ms.id] ?? 1);
-    return (ms.price / Math.max(1, ms.creditsTotal ?? 1)) * Math.max(1, b.creditsCharged);
+    const base = ms.valueBase ?? ms.price; // 轉讓來的方案以轉讓時的剩餘價值計算
+    if (ms.kind === 'PERIOD') return base / Math.max(1, periodUse[ms.id] ?? 1);
+    return (base / Math.max(1, ms.creditsTotal ?? 1)) * Math.max(1, b.creditsCharged);
   };
   const coaches = await prisma.coach.findMany({ where: { userId } });
   const rows = coaches.map((c) => {
     const mine = sessions.filter((s) => s.coachId === c.id);
-    const detail = mine.map((s) => {
+    const values = mine.map((s) => Math.round(s.bookings.reduce((a, b) => a + unit(b), 0)));
+    // 階梯式抽成：當月總產值達到的最高門檻 % 套用到整月；沒設定就用固定 %
+    const tiers = Array.isArray(c.shareTiers) ? (c.shareTiers as { min: number; rate: number }[]) : [];
+    const monthValue = values.reduce((a, v) => a + v, 0);
+    const reached = [...tiers].sort((a, b) => a.min - b.min).filter((t) => monthValue >= t.min);
+    const rate = tiers.length ? (reached.at(-1)?.rate ?? 0) : c.revenueShare;
+    const detail = mine.map((s, i) => {
       const heads = s.bookings.length;
-      const value = Math.round(s.bookings.reduce((a, b) => a + unit(b), 0));
-      const pay = c.payPerClass + Math.max(0, heads - c.headThreshold) * c.payPerHead + Math.round(value * c.revenueShare / 100);
-      return { sessionId: s.id, startsAt: s.startsAt, className: s.classType.name, heads, capacity: s.capacity, value, pay };
+      const value = values[i];
+      const pay = c.payPerClass + Math.max(0, heads - c.headThreshold) * c.payPerHead + Math.round(value * rate / 100);
+      return { sessionId: s.id, startsAt: s.startsAt, className: s.classType.name, heads, capacity: s.capacity, value, pay, substitute: Boolean(s.originalCoachId) };
     });
     return {
       coachId: c.id, coachName: c.name, active: c.active,
-      rule: { payPerClass: c.payPerClass, payPerHead: c.payPerHead, headThreshold: c.headThreshold, revenueShare: c.revenueShare },
+      rule: { payPerClass: c.payPerClass, payPerHead: c.payPerHead, headThreshold: c.headThreshold, revenueShare: c.revenueShare, tiers, appliedRate: rate },
       classes: detail.length, heads: detail.reduce((a, d) => a + d.heads, 0),
       fillRate: detail.length ? Math.round(detail.reduce((a, d) => a + d.heads / d.capacity, 0) / detail.length * 100) : null,
       value: detail.reduce((a, d) => a + d.value, 0), pay: detail.reduce((a, d) => a + d.pay, 0), detail,

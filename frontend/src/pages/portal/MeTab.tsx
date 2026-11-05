@@ -3,6 +3,7 @@ import { MapPin, Phone, Gift, CalendarPlus, Receipt, Copy, Share2 } from 'lucide
 import memberApi, { errorText } from './memberApi';
 import { CARRIER, PLAN_KIND, dateStr, money } from '../../lib/format';
 import { Me, Notify } from './types';
+import { AccessCode, AppCard, ContractsCard, MetricsCard, SubscriptionsCard, SurveysCard } from './MoreSections';
 
 interface MyCoupon { code: string; name: string; discountType: 'AMOUNT' | 'PERCENT'; value: number; validTo: string | null }
 
@@ -23,6 +24,8 @@ export default function MeTab({ me, onChange }: { me: Me; onChange: Notify }) {
 
   return (
     <div className="space-y-3">
+      <AccessCode />
+      <SurveysCard onChange={onChange} />
       {me.passes.length === 0 ? <div className="card text-sm text-gray-400 text-center py-8">目前沒有有效方案</div> : me.passes.map((p) => (
         <div key={p.id} className="card">
           <div className="flex items-center gap-2">
@@ -41,6 +44,10 @@ export default function MeTab({ me, onChange }: { me: Me; onChange: Notify }) {
         </div>
       ))}
 
+      <AppCard onChange={onChange} />
+      <SubscriptionsCard onChange={onChange} />
+      <MetricsCard />
+      <ContractsCard />
       {coupons.length > 0 && (
         <div className="card">
           <div className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5"><Gift className="w-4 h-4 text-brand" />我的折價券</div>

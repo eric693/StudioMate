@@ -33,6 +33,16 @@ export const config = {
     },
   },
 
+  // Web Push（會員手機通知）
+  push: {
+    publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+    privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+    subject: process.env.VAPID_SUBJECT || process.env.APP_URL || 'https://localhost',
+    get enabled() {
+      return Boolean(this.publicKey && this.privateKey);
+    },
+  },
+
   // 測試時關閉排程，避免背景工作干擾
   schedulerEnabled: process.env.DISABLE_SCHEDULER !== 'true',
 };

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, CreditCard, MessageCircle, Snowflake, Sun, SlidersHorizontal, Copy } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, CreditCard, MessageCircle, Snowflake, Sun, SlidersHorizontal, Copy, Undo2, ArrowRightLeft, FileSignature, Activity } from 'lucide-react';
+import SignaturePad from '../components/SignaturePad';
+import MemberPicker, { PickedMember } from '../components/MemberPicker';
 import api from '../api/client';
 import Modal, { Field } from '../components/Modal';
 import { BookingStatus, Coupon, Member, Membership, Plan } from '../types';
@@ -18,13 +20,14 @@ export default function MemberDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [m, setM] = useState<Detail | null>(null);
-  const [modal, setModal] = useState<'edit' | 'sell' | { freeze: Membership } | { adjust: Membership } | null>(null);
+  const [modal, setModal] = useState<'edit' | 'sell' | 'metric' | { freeze: Membership } | { adjust: Membership } | { refund: Membership } | { transfer: Membership } | { sign: Membership } | null>(null);
+  const [extraKey, setExtraKey] = useState(0);
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const load = () => api.get(`/members/${id}`).then((r) => setM(r.data));
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!m) return <div className="text-gray-400 text-sm">載入中…</div>;
 
-  const close = () => { setModal(null); load(); };
+  const close = () => { setModal(null); load(); setExtraKey((k) => k + 1); };
   async function remove() {
     if (!confirm(`確定刪除會員「${m!.name}」？`)) return;
     await api.delete(`/members/${m!.id}`);
@@ -136,6 +139,9 @@ export default function MemberDetail() {
                   ? <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => unfreeze(p)}><Sun className="w-3.5 h-3.5" />解除凍結</button>
                   : <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => setModal({ freeze: p })}><Snowflake className="w-3.5 h-3.5" />凍結</button>}
                 <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => setModal({ adjust: p })}><SlidersHorizontal className="w-3.5 h-3.5" />調整</button>
+                {p.status === 'ACTIVE' && <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => setModal({ transfer: p })}><ArrowRightLeft className="w-3.5 h-3.5" />轉讓</button>}
+                <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => setModal({ refund: p })}><Undo2 className="w-3.5 h-3.5" />退費</button>
+                <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => setModal({ sign: p })}><FileSignature className="w-3.5 h-3.5" />簽約</button>
               </div>
             </div>
           ))}
@@ -147,13 +153,19 @@ export default function MemberDetail() {
               {past.map((p) => (
                 <div key={p.id} className="flex items-center justify-between py-2 text-sm">
                   <span className="text-gray-600">{p.planName}<span className="text-xs text-gray-400 ml-2">{dateStr(p.startDate)} ~ {dateStr(p.endDate)}</span></span>
-                  <span className="text-xs text-gray-400">{p.status === 'ACTIVE' ? '已到期' : PASS_STATUS[p.status]}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{p.status === 'ACTIVE' ? '已到期' : PASS_STATUS[p.status]}</span>
+                    {['ACTIVE', 'EXPIRED'].includes(p.status) && <button className="text-xs text-brand" onClick={() => setModal({ refund: p })}>退費</button>}
+                  </span>
                 </div>
               ))}
             </div>
           </details>
         )}
       </div>
+
+      <ContractsCard key={`c${extraKey}`} memberId={m.id} />
+      <MetricsCard key={`m${extraKey}`} memberId={m.id} onAdd={() => setModal('metric')} />
 
       <div className="card">
         <h2 className="font-semibold text-gray-700 mb-3">上課紀錄</h2>
@@ -184,7 +196,7 @@ export default function MemberDetail() {
                   <span className="text-gray-700">{p.planName}</span><span className="text-xs text-gray-400 ml-2">{dateStr(p.paidAt)}・{PAY_METHOD[p.payMethod]}{p.discount ? `・折抵 ${p.discount}` : ''}</span>
                   {p.invoiceStatus && <div className={`text-xs ${p.invoiceStatus === 'FAILED' ? 'text-red-500' : 'text-gray-400'}`}>發票{INVOICE_STATUS[p.invoiceStatus]}{p.invoiceNo ? ` ${p.invoiceNo}` : ''}{p.invoiceError && p.invoiceStatus === 'FAILED' ? `：${p.invoiceError}` : ''}</div>}
                 </div>
-                <span className={p.status === 'CANCELLED' ? 'line-through text-gray-400' : 'text-gray-700'}>{money(p.price)}</span>
+                <span className={p.status === 'CANCELLED' ? 'line-through text-gray-400' : 'text-gray-700'}>{money(p.price)}{p.status === 'REFUNDED' && <span className="text-xs text-red-500 ml-1">已退費</span>}</span>
               </div>
             ))}
           </div>
@@ -195,6 +207,10 @@ export default function MemberDetail() {
       {modal === 'sell' && <SellForm memberId={m.id} onClose={() => setModal(null)} onSaved={close} />}
       {modal && typeof modal === 'object' && 'freeze' in modal && <FreezeForm p={modal.freeze} onClose={() => setModal(null)} onSaved={close} />}
       {modal && typeof modal === 'object' && 'adjust' in modal && <AdjustForm p={modal.adjust} onClose={() => setModal(null)} onSaved={close} />}
+      {modal && typeof modal === 'object' && 'refund' in modal && <RefundForm p={modal.refund} onClose={() => setModal(null)} onSaved={close} />}
+      {modal && typeof modal === 'object' && 'transfer' in modal && <TransferForm p={modal.transfer} memberId={m.id} onClose={() => setModal(null)} onSaved={close} />}
+      {modal && typeof modal === 'object' && 'sign' in modal && <SignForm p={modal.sign} memberName={m.name} onClose={() => setModal(null)} onSaved={close} />}
+      {modal === 'metric' && <MetricForm memberId={m.id} onClose={() => setModal(null)} onSaved={close} />}
     </div>
   );
 }
@@ -290,6 +306,212 @@ function AdjustForm({ p, onClose, onSaved }: { p: Membership; onClose: () => voi
         <Field label="備註" hint="例如：補償停課 1 堂"><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
         <button className="btn-primary w-full">儲存</button>
         <button type="button" className="btn-danger w-full" onClick={voidPass}>作廢此方案</button>
+      </form>
+    </Modal>
+  );
+}
+
+interface RefundQuote { price: number; base: number; used: number; remaining: number; feePercent: number; fee: number; refund: number; usage: string; invoice: string | null }
+
+/** 退費：依已使用比例試算，可手動調整實退金額 */
+function RefundForm({ p, onClose, onSaved }: { p: Membership; onClose: () => void; onSaved: () => void }) {
+  const [q, setQ] = useState<RefundQuote | null>(null);
+  const [f, setF] = useState({ amount: '', method: 'CASH', reason: '' });
+  useEffect(() => { api.get(`/memberships/${p.id}/refund`).then((r) => { setQ(r.data); setF((x) => ({ ...x, amount: String(r.data.refund), method: p.payMethod })); }); }, [p.id, p.payMethod]);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!confirm(`確認退費 ${money(+f.amount)} 並解約「${p.planName}」？未開始的預約會一併取消。`)) return;
+    await api.post(`/memberships/${p.id}/refund`, { amount: +f.amount, method: f.method, reason: f.reason || undefined });
+    onSaved();
+  }
+  return (
+    <Modal title={`退費「${p.planName}」`} onClose={onClose}>
+      {!q ? <p className="text-sm text-gray-400">試算中…</p> : (
+        <form onSubmit={submit} className="space-y-3">
+          <div className="rounded-xl bg-gray-50 p-3 text-sm space-y-1">
+            <Row label="售價" value={money(q.price)} />
+            {q.base !== q.price && <Row label="計算基準（轉讓時剩餘價值）" value={money(q.base)} />}
+            <Row label={`已使用（${q.usage}）`} value={`- ${money(q.used)}`} />
+            <Row label="剩餘價值" value={money(q.remaining)} />
+            <Row label={`手續費（${q.feePercent}%）`} value={`- ${money(q.fee)}`} />
+            <div className="border-t border-gray-200 pt-1"><Row label="建議退費" value={money(q.refund)} strong /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="實退金額"><input type="number" min={0} max={p.price} className="input" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} required /></Field>
+            <Field label="退款方式"><select className="input" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{Object.entries(PAY_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+          </div>
+          <Field label="原因（選填）"><input className="input" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="例如：搬家、受傷" /></Field>
+          {q.invoice && <p className="text-xs text-gray-500">發票 {q.invoice}：全額退費會作廢發票，部分退費會開立折讓單。</p>}
+          {p.payMethod === 'LINEPAY' && <p className="text-xs text-gray-500">LINE Pay 線上付款的訂單會直接退回會員的 LINE Pay。</p>}
+          <button className="btn-danger w-full">確認退費並解約</button>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return <div className={`flex justify-between ${strong ? 'font-semibold text-gray-800' : 'text-gray-600'}`}><span>{label}</span><span className="tabular-nums">{value}</span></div>;
+}
+
+/** 轉讓：剩餘堂數或期限移給另一位會員 */
+function TransferForm({ p, memberId, onClose, onSaved }: { p: Membership; memberId: string; onClose: () => void; onSaved: () => void }) {
+  const [to, setTo] = useState<PickedMember | null>(null);
+  const [fee, setFee] = useState('');
+  const [payMethod, setPayMethod] = useState('CASH');
+  useEffect(() => { api.get('/studio').then((r) => setFee(String(r.data.transferFee ?? 0))); }, []);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!to) return;
+    if (!confirm(`把「${p.planName}」轉讓給 ${to.name}？轉出後原會員不能再使用。`)) return;
+    await api.post(`/memberships/${p.id}/transfer`, { toMemberId: to.id, fee: +fee || 0, payMethod });
+    onSaved();
+  }
+  return (
+    <Modal title={`轉讓「${p.planName}」`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <p className="text-xs text-gray-500">{passText(p)}。受讓人會拿到剩餘的{p.kind === 'PERIOD' ? '期間' : '堂數'}，到期日不變；轉出人未開始的預約會取消。</p>
+        <Field label="受讓會員"><MemberPicker value={to} onChange={setTo} exclude={memberId} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="轉讓手續費"><input type="number" min={0} className="input" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
+          <Field label="付款方式"><select className="input" value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>{Object.entries(PAY_METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+        </div>
+        <button className="btn-primary w-full" disabled={!to}>確認轉讓</button>
+      </form>
+    </Modal>
+  );
+}
+
+/** 櫃檯簽約：顯示合約內容，會員在平板上手寫簽名 */
+function SignForm({ p, memberName, onClose, onSaved }: { p: Membership; memberName: string; onClose: () => void; onSaved: () => void }) {
+  const [doc, setDoc] = useState<{ content: string; title: string } | null>(null);
+  const [sig, setSig] = useState<string | null>(null);
+  const [name, setName] = useState(memberName);
+  useEffect(() => { api.get('/contracts/preview', { params: { membershipId: p.id } }).then((r) => setDoc(r.data)); }, [p.id]);
+  async function submit() {
+    await api.post('/contracts', { membershipId: p.id, signature: sig, signerName: name });
+    onSaved();
+  }
+  return (
+    <Modal title="簽署會員合約" onClose={onClose} wide>
+      {!doc ? <p className="text-sm text-gray-400">載入中…</p> : (
+        <div className="space-y-3">
+          <div className="text-sm font-medium text-gray-800">{doc.title}</div>
+          <div className="max-h-64 overflow-y-auto rounded-xl bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{doc.content}</div>
+          <Field label="簽署人"><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          <SignaturePad onChange={setSig} />
+          <button className="btn-primary w-full" disabled={!sig || !name.trim()} onClick={submit}>確認簽署</button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+interface ContractRow { id: string; title: string; signerName: string; signedAt: string; channel: string }
+
+function ContractsCard({ memberId }: { memberId: string }) {
+  const [list, setList] = useState<ContractRow[] | null>(null);
+  const [open, setOpen] = useState<{ title: string; content: string; signature: string; signerName: string; signedAt: string } | null>(null);
+  useEffect(() => { api.get('/contracts', { params: { memberId } }).then((r) => setList(r.data)); }, [memberId]);
+  if (!list?.length) return null;
+  return (
+    <div className="card">
+      <h2 className="font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><FileSignature className="w-4 h-4 text-brand" />合約</h2>
+      <div className="divide-y divide-gray-50">
+        {list.map((c) => (
+          <button key={c.id} className="w-full flex items-center justify-between py-2 text-sm text-left hover:bg-gray-50 rounded-lg px-2 -mx-2" onClick={async () => setOpen((await api.get(`/contracts/${c.id}`)).data)}>
+            <span className="text-gray-700">{c.title}</span>
+            <span className="text-xs text-gray-400">{dateTime(c.signedAt)}・{c.channel === 'ONLINE' ? '線上簽署' : '櫃檯簽署'}</span>
+          </button>
+        ))}
+      </div>
+      {open && (
+        <Modal title={open.title} onClose={() => setOpen(null)} wide>
+          <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{open.content}</div>
+          <div className="mt-4 border-t border-gray-100 pt-3">
+            <div className="text-xs text-gray-400">簽署人 {open.signerName}・{dateTime(open.signedAt)}</div>
+            <img src={open.signature} alt="簽名" className="h-24 mt-1" />
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+interface Metric { id: string; measuredAt: string; heightCm: number | null; weightKg: number | null; bodyFatPct: number | null; muscleKg: number | null; visceralFat: number | null; bmr: number | null; bmi: number | null; note: string | null }
+
+export function MetricsTable({ list, onDelete }: { list: Metric[]; onDelete?: (id: string) => void }) {
+  const delta = (k: keyof Metric, i: number) => {
+    const a = list[i][k] as number | null, b = list[i + 1]?.[k] as number | null | undefined;
+    if (a == null || b == null) return null;
+    const d = Math.round((a - b) * 10) / 10;
+    return d === 0 ? null : <span className={`ml-1 text-[10px] ${d > 0 ? 'text-orange-500' : 'text-green-600'}`}>{d > 0 ? '+' : ''}{d}</span>;
+  };
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm tabular-nums">
+        <thead><tr className="text-xs text-gray-400 text-left"><th className="py-1 pr-2 font-normal">日期</th><th className="pr-2 font-normal">體重</th><th className="pr-2 font-normal">體脂 %</th><th className="pr-2 font-normal">肌肉量</th><th className="pr-2 font-normal">BMI</th><th className="pr-2 font-normal">內臟脂肪</th><th className="pr-2 font-normal">基礎代謝</th>{onDelete && <th />}</tr></thead>
+        <tbody className="divide-y divide-gray-50">
+          {list.map((x, i) => (
+            <tr key={x.id} className="text-gray-700">
+              <td className="py-1.5 pr-2 whitespace-nowrap">{dateStr(x.measuredAt)}</td>
+              <td className="pr-2 whitespace-nowrap">{x.weightKg ?? '—'}{delta('weightKg', i)}</td>
+              <td className="pr-2 whitespace-nowrap">{x.bodyFatPct ?? '—'}{delta('bodyFatPct', i)}</td>
+              <td className="pr-2 whitespace-nowrap">{x.muscleKg ?? '—'}{delta('muscleKg', i)}</td>
+              <td className="pr-2">{x.bmi ?? '—'}</td>
+              <td className="pr-2">{x.visceralFat ?? '—'}</td>
+              <td className="pr-2">{x.bmr ?? '—'}</td>
+              {onDelete && <td><button className="text-xs text-gray-300 hover:text-red-500" onClick={() => onDelete(x.id)} aria-label="刪除"><Trash2 className="w-3.5 h-3.5" /></button></td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MetricsCard({ memberId, onAdd }: { memberId: string; onAdd: () => void }) {
+  const [list, setList] = useState<Metric[]>([]);
+  const load = () => api.get(`/members/${memberId}/metrics`).then((r) => setList(r.data));
+  useEffect(() => { load(); }, [memberId]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function remove(id: string) {
+    if (!confirm('刪除這筆量測紀錄？')) return;
+    await api.delete(`/members/${memberId}/metrics/${id}`); load();
+  }
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="font-semibold text-gray-700 flex items-center gap-1.5"><Activity className="w-4 h-4 text-brand" />體組成</h2>
+        <button className="btn-secondary text-xs py-1" onClick={onAdd}>新增量測</button>
+      </div>
+      {list.length === 0 ? <p className="text-sm text-gray-400">還沒有量測紀錄。InBody 或體脂計量完後在這裡記錄，會員可以在手機上看到變化。</p> : <MetricsTable list={list} onDelete={remove} />}
+    </div>
+  );
+}
+
+function MetricForm({ memberId, onClose, onSaved }: { memberId: string; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState<Record<string, string>>({ measuredAt: localDay(), heightCm: '', weightKg: '', bodyFatPct: '', muscleKg: '', visceralFat: '', bmr: '', note: '' });
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const body = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v === '' ? null : k === 'measuredAt' || k === 'note' ? v : Number(v)]));
+    await api.post(`/members/${memberId}/metrics`, body);
+    onSaved();
+  }
+  return (
+    <Modal title="新增體組成量測" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="量測日期"><input type="date" className="input" value={f.measuredAt} onChange={set('measuredAt')} required /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="身高（cm）"><input type="number" step="0.1" className="input" value={f.heightCm} onChange={set('heightCm')} /></Field>
+          <Field label="體重（kg）"><input type="number" step="0.1" className="input" value={f.weightKg} onChange={set('weightKg')} /></Field>
+          <Field label="體脂率（%）"><input type="number" step="0.1" className="input" value={f.bodyFatPct} onChange={set('bodyFatPct')} /></Field>
+          <Field label="骨骼肌重（kg）"><input type="number" step="0.1" className="input" value={f.muscleKg} onChange={set('muscleKg')} /></Field>
+          <Field label="內臟脂肪等級"><input type="number" step="0.5" className="input" value={f.visceralFat} onChange={set('visceralFat')} /></Field>
+          <Field label="基礎代謝（kcal）"><input type="number" className="input" value={f.bmr} onChange={set('bmr')} /></Field>
+        </div>
+        <Field label="備註"><input className="input" value={f.note} onChange={set('note')} /></Field>
+        <button className="btn-primary w-full">儲存</button>
       </form>
     </Modal>
   );

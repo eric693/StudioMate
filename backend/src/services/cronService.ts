@@ -5,10 +5,11 @@ import { refreshMembershipStatus } from './membershipService';
 import { generateAllStudios } from './scheduleService';
 import { runReminders } from './reminderService';
 import { prisma } from '../app';
+import { inviteAfterClassSurveys, runAutomations } from './automationService';
 
 /** 線上付款訂單超過 24 小時沒付款就取消（轉帳訂單等櫃檯審核，不自動取消） */
 export async function expireStaleOrders() {
-  const r = await prisma.order.updateMany({ where: { method: 'ONLINE', status: 'PENDING', createdAt: { lt: new Date(Date.now() - 24 * 3600e3) } }, data: { status: 'CANCELLED' } });
+  const r = await prisma.order.updateMany({ where: { method: { in: ['ONLINE', 'LINEPAY'] }, status: 'PENDING', createdAt: { lt: new Date(Date.now() - 24 * 3600e3) } }, data: { status: 'CANCELLED' } });
   return { expired: r.count };
 }
 
@@ -31,7 +32,10 @@ export function startScheduler() {
   cron.schedule('*/10 * * * *', async () => {
     await safely('closeFinishedSessions', () => closeFinishedSessions());
     await safely('runReminders', () => runReminders());
+    await safely('inviteAfterClassSurveys', () => inviteAfterClassSurveys());
   });
+  // 生日、喚回、置物櫃到期：每天早上 10 點（避免半夜推播）
+  cron.schedule('0 10 * * *', () => safely('runAutomations', () => runAutomations()), { timezone: 'Asia/Taipei' });
   cron.schedule('10 0 * * *', runDaily, { timezone: 'Asia/Taipei' });
   void runDaily();
 }

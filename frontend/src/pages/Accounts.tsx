@@ -267,7 +267,10 @@ function StaffForm({ user, modules, onClose, onSaved }: {
     email: user?.email ?? '',
     password: '',
     permissions: user?.permissions ?? ['dashboard', 'finance'],
+    coachId: user?.coachId ?? '',
   });
+  const [coaches, setCoaches] = useState<{ id: string; name: string; active: boolean }[]>([]);
+  useEffect(() => { api.get('/coaches').then((r) => setCoaches(r.data)); }, []);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -284,10 +287,10 @@ function StaffForm({ user, modules, onClose, onSaved }: {
     setSaving(true);
     try {
       if (user) {
-        await api.put(`/users/${user.id}`, { ...form, password: form.password || undefined });
+        await api.put(`/users/${user.id}`, { ...form, password: form.password || undefined, coachId: form.coachId || null });
         onSaved('已更新帳號');
       } else {
-        await api.post('/users', form);
+        await api.post('/users', { ...form, coachId: form.coachId || null });
         onSaved(`已建立帳號「${form.email}」`);
       }
     } catch (err) {
@@ -321,6 +324,13 @@ function StaffForm({ user, modules, onClose, onSaved }: {
               required={!user}
               minLength={6}
             />
+          </label>
+          <label className="block text-xs text-gray-500">這個帳號是哪位教練（選填）
+            <select className="input mt-1" value={form.coachId} onChange={(e) => setForm({ ...form, coachId: e.target.value })}>
+              <option value="">不是教練</option>
+              {coaches.filter((c) => c.active || c.id === form.coachId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <span className="block text-gray-400 mt-1">設定後，這個帳號只能替自己的課請假，也不能審核請假</span>
           </label>
           <div>
             <div className="text-xs text-gray-500 mb-1.5 flex items-center justify-between">
