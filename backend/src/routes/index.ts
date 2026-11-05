@@ -25,8 +25,26 @@ import {
 import {
   listOrders, approveOrder, rejectOrderHandler, deleteOrder, listCoupons, createCoupon, updateCoupon, deleteCoupon, quoteCouponHandler,
   issueInvoiceHandler, voidInvoiceHandler, ecpayNotify, portalShop, portalQuote, portalCreateOrder, portalPayForm, portalSubmitTransfer,
-  portalCancelOrder, portalOrders, portalCoupons,
+  portalCancelOrder, portalOrders, portalCoupons, ecpayPeriodNotify, linePayConfirmHandler, portalLinePay, portalContractPreview,
 } from '../controllers/commerceController';
+import {
+  getRefundQuote, postRefund, postTransfer, listRefunds, getDeferred, listSubscriptions, staffCancelSubscription, portalSubscriptions, portalCancelSubscription,
+  contractTemplate, contractPreview, signContract, listContracts, getContract, portalContracts,
+} from '../controllers/financeController';
+import {
+  substituteHandler, listLeaves, createLeave, reviewLeave, deleteLeave, listShifts, createShift, updateShift, deleteShift, copyWeekShifts,
+  myClock, clockIn, clockOut, upsertClock, deleteClock, clockReport,
+} from '../controllers/staffController';
+import {
+  portalAccessCode, deviceCheck, staffScan, listAccessLogs, listDevices, createDevice, updateDevice, deleteDevice,
+  listLockers, createLocker, bulkLockers, updateLocker, deleteLocker, rentLocker, updateLockerRental, listMetrics, createMetric, deleteMetric, portalMetrics,
+} from '../controllers/accessController';
+import { listProducts, createProduct, updateProduct, deleteProduct, adjustStock, stockMoves, createSale, saleInvoiceHandler, voidSale, listSales } from '../controllers/posController';
+import {
+  listAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement, portalAnnouncements,
+  listSurveys, createSurvey, updateSurvey, deleteSurvey, surveyResults, portalSurveys, portalAnswerSurvey, insights,
+} from '../controllers/engageController';
+import { pushConfig, pushSubscribe, pushUnsubscribe, pushTest } from '../controllers/pushController';
 import {
   checkInInfo, rotateCheckIn, memberCheckIn, getAvailability, setAvailability, staffPrivateSlots, staffPrivateBook, staffPrivateOptions,
   portalPrivateOptions, portalPrivateSlots, portalPrivateBook, portalLiveLink, calendarFeed, coachPay,
@@ -45,6 +63,9 @@ r.post('/auth/login', login);
 r.get('/auth/demo', demoAccount);
 r.post('/line/webhook', webhook);
 r.post('/pay/ecpay/notify', ecpayNotify);
+r.post('/pay/ecpay/period', ecpayPeriodNotify);
+r.get('/pay/linepay/confirm', linePayConfirmHandler);
+r.post('/access/check', deviceCheck); // 門禁裝置（以裝置 token 驗證）
 r.get('/cal/:token', calendarFeed); // 行事曆訂閱（網址本身就是憑證）
 
 // ── 會員端 ──
@@ -71,6 +92,20 @@ r.get('/portal/referral', requireMember, portalReferral);
 r.get('/portal/private/options', requireMember, portalPrivateOptions);
 r.get('/portal/private/slots', requireMember, portalPrivateSlots);
 r.post('/portal/private/book', requireMember, portalPrivateBook);
+r.post('/portal/orders/:id/linepay', requireMember, portalLinePay);
+r.get('/portal/contract-preview', requireMember, portalContractPreview);
+r.get('/portal/contracts', requireMember, portalContracts);
+r.get('/portal/subscriptions', requireMember, portalSubscriptions);
+r.post('/portal/subscriptions/:id/cancel', requireMember, portalCancelSubscription);
+r.get('/portal/access-code', requireMember, portalAccessCode);
+r.get('/portal/metrics', requireMember, portalMetrics);
+r.get('/portal/announcements', requireMember, portalAnnouncements);
+r.get('/portal/surveys', requireMember, portalSurveys);
+r.post('/portal/surveys/:id', requireMember, portalAnswerSurvey);
+r.get('/portal/push', requireMember, pushConfig);
+r.post('/portal/push/subscribe', requireMember, pushSubscribe);
+r.post('/portal/push/unsubscribe', requireMember, pushUnsubscribe);
+r.post('/portal/push/test', requireMember, pushTest);
 
 // ── 教室端（需登入；員工依模組權限，見 middleware/permissions.ts） ──
 r.use(requireAuth);
@@ -90,6 +125,8 @@ r.get('/reports/coach-pay', coachPay);
 r.get('/reports/export/sales', exportSales);
 r.get('/reports/export/attendance', exportAttendance);
 r.get('/reports/export/coach-pay', exportCoachPay);
+r.get('/reports/deferred', getDeferred);
+r.get('/reports/insights', insights);
 
 r.get('/studio', getStudioSettings);
 r.put('/studio', updateStudioSettings);
@@ -140,6 +177,20 @@ r.delete('/orders/:id', deleteOrder);
 r.put('/memberships/:id', updateMembership);
 r.post('/memberships/:id/freeze', freeze);
 r.post('/memberships/:id/unfreeze', unfreeze);
+r.get('/memberships/:id/refund', getRefundQuote);
+r.post('/memberships/:id/refund', postRefund);
+r.post('/memberships/:id/transfer', postTransfer);
+r.get('/refunds', listRefunds);
+r.get('/subscriptions', listSubscriptions);
+r.post('/subscriptions/:id/cancel', staffCancelSubscription);
+r.get('/contracts/template', contractTemplate);
+r.get('/contracts/preview', contractPreview);
+r.get('/contracts', listContracts);
+r.post('/contracts', signContract);
+r.get('/contracts/:id', getContract);
+r.get('/members/:id/metrics', listMetrics);
+r.post('/members/:id/metrics', createMetric);
+r.delete('/members/:id/metrics/:metricId', deleteMetric);
 
 r.get('/templates', listTemplates);
 r.post('/templates', createTemplate);
@@ -153,6 +204,11 @@ r.get('/sessions/:id', getSession);
 r.put('/sessions/:id', updateSession);
 r.post('/sessions/:id/cancel', cancelSessionHandler);
 r.delete('/sessions/:id', deleteSession);
+r.post('/sessions/:id/substitute', substituteHandler);
+r.get('/leaves', listLeaves);
+r.post('/leaves', createLeave);
+r.post('/leaves/:id/review', reviewLeave);
+r.delete('/leaves/:id', deleteLeave);
 
 r.post('/bookings', createBooking);
 r.post('/bookings/:id/cancel', cancelBookingHandler);
@@ -179,5 +235,54 @@ r.get('/rentals', listRentals);
 r.post('/rentals', createRental);
 r.put('/rentals/:id', updateRental);
 r.delete('/rentals/:id', deleteRental);
+
+r.get('/me/clock', myClock);
+r.post('/me/clock/in', clockIn);
+r.post('/me/clock/out', clockOut);
+r.get('/shifts', listShifts);
+r.post('/shifts', createShift);
+r.post('/shifts/copy-week', copyWeekShifts);
+r.put('/shifts/:id', updateShift);
+r.delete('/shifts/:id', deleteShift);
+r.get('/clocks/report', clockReport);
+r.post('/clocks', upsertClock);
+r.put('/clocks/:id', upsertClock);
+r.delete('/clocks/:id', deleteClock);
+
+r.post('/access/scan', staffScan);
+r.get('/access/logs', listAccessLogs);
+r.get('/access/devices', listDevices);
+r.post('/access/devices', createDevice);
+r.put('/access/devices/:id', updateDevice);
+r.delete('/access/devices/:id', deleteDevice);
+
+r.get('/lockers', listLockers);
+r.post('/lockers', createLocker);
+r.post('/lockers/bulk', bulkLockers);
+r.put('/lockers/:id', updateLocker);
+r.delete('/lockers/:id', deleteLocker);
+r.post('/lockers/:id/rent', rentLocker);
+r.put('/lockers/rentals/:id', updateLockerRental);
+
+r.get('/products', listProducts);
+r.post('/products', createProduct);
+r.put('/products/:id', updateProduct);
+r.delete('/products/:id', deleteProduct);
+r.post('/products/:id/stock', adjustStock);
+r.get('/products/:id/moves', stockMoves);
+r.get('/sales', listSales);
+r.post('/sales', createSale);
+r.post('/sales/:id/invoice', saleInvoiceHandler);
+r.post('/sales/:id/void', voidSale);
+
+r.get('/announcements', listAnnouncements);
+r.post('/announcements', createAnnouncement);
+r.put('/announcements/:id', updateAnnouncement);
+r.delete('/announcements/:id', deleteAnnouncement);
+r.get('/surveys', listSurveys);
+r.post('/surveys', createSurvey);
+r.put('/surveys/:id', updateSurvey);
+r.delete('/surveys/:id', deleteSurvey);
+r.get('/surveys/:id/results', surveyResults);
 
 export default r;

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 // 方案、課程類型、教練的維護（皆以教室擁有者 userId 為範圍）
 import { Response } from 'express';
 import { z } from 'zod';
@@ -46,6 +47,9 @@ const coachSchema = z.object({
   payPerHead: z.coerce.number().int().min(0).max(100000).optional(),
   headThreshold: z.coerce.number().int().min(0).max(500).optional(),
   revenueShare: z.coerce.number().int().min(0).max(100).optional(),
+  // 階梯式抽成：當月產值達到門檻後套用對應 %
+  shareTiers: z.array(z.object({ min: z.coerce.number().int().min(0).max(100_000_000), rate: z.coerce.number().int().min(0).max(100) }))
+    .max(10).nullable().optional().transform((t) => (t && t.length ? [...t].sort((a, b) => a.min - b.min) : t === undefined ? undefined : Prisma.DbNull)),
   active: z.boolean().optional(),
 });
 
@@ -81,10 +85,12 @@ const planSchema = z.object({
   dailyLimit: z.coerce.number().int().min(1).max(20).optional().nullable(),
   onlineSale: z.boolean().optional(),
   trialOnly: z.boolean().optional(),
+  recurring: z.boolean().optional(),
   description: z.string().trim().max(500).optional().nullable(),
   active: z.boolean().optional(),
 }).superRefine((p, ctx) => {
   if (p.kind === 'PACK' && !p.credits) ctx.addIssue({ code: 'custom', path: ['credits'], message: '堂數卡須填寫堂數' });
+  if (p.recurring && p.kind !== 'PERIOD') ctx.addIssue({ code: 'custom', path: ['recurring'], message: '定期定額只適用期限卡（例如月卡）' });
 });
 
 async function checkClassTypes(userId: string, ids?: string[]) {

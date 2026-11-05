@@ -40,14 +40,36 @@ const studioSchema = z.object({
   invoiceHashKey: z.string().trim().max(64).nullable(),
   invoiceHashIV: z.string().trim().max(64).nullable(),
   referralRewardAmount: z.coerce.number().int().min(0).max(100000),
+  refundFeePercent: z.coerce.number().int().min(0).max(100),
+  transferFee: z.coerce.number().int().min(0).max(100000),
+  trustType: z.enum(['TRUST', 'GUARANTEE']).nullable().or(z.literal('').transform(() => null)),
+  trustBank: z.string().trim().max(60).nullable(),
+  trustNote: z.string().trim().max(300).nullable(),
+  installments: z.string().trim().regex(/^(3|6|12|18|24|30)(,(3|6|12|18|24|30))*$/, '分期期數只能是 3、6、12、18、24、30，以逗號分隔').nullable().or(z.literal('').transform(() => null)),
+  installmentMin: z.coerce.number().int().min(0).max(10_000_000),
+  linePayEnabled: z.boolean(),
+  linePayMode: z.enum(['sandbox', 'production']),
+  linePayChannelId: z.string().trim().max(20).nullable(),
+  linePaySecret: z.string().trim().max(64).nullable(),
+  contractEnabled: z.boolean(),
+  contractText: z.string().max(20000).nullable(),
+  birthdayEnabled: z.boolean(),
+  birthdayMessage: z.string().trim().max(500).nullable(),
+  birthdayCoupon: z.coerce.number().int().min(0).max(100000),
+  winbackEnabled: z.boolean(),
+  winbackDays: z.coerce.number().int().min(7).max(365),
+  winbackMessage: z.string().trim().max(500).nullable(),
+  winbackCoupon: z.coerce.number().int().min(0).max(100000),
+  accessAutoCheckIn: z.boolean(),
 }).partial();
 
-const SECRETS = ['ecpayHashKey', 'ecpayHashIV', 'invoiceHashKey', 'invoiceHashIV'] as const;
+const SECRETS = ['ecpayHashKey', 'ecpayHashIV', 'invoiceHashKey', 'invoiceHashIV', 'linePaySecret'] as const;
 
 /** 金鑰不回傳原文，只告訴前端有沒有設定；簽到 token 只給設定頁顯示 QR code 用 */
 function publicStudio(s: Studio) {
   const out: Record<string, unknown> = { ...s, lineEnabled: config.line.enabled };
   for (const k of SECRETS) { out[`${k}Set`] = Boolean(s[k]); delete out[k]; }
+  delete out.accessSecret;
   return out;
 }
 
@@ -65,6 +87,10 @@ export async function updateStudioSettings(req: AuthRequest, res: Response) {
     const merged = { ...cur, ...d };
     if (merged.ecpayMode === 'production' && !(merged.ecpayMerchantId && merged.ecpayHashKey && merged.ecpayHashIV)) throw badRequest('切換正式金流前，請填寫綠界特店編號、HashKey 與 HashIV');
     if (merged.invoiceMode === 'production' && !(merged.invoiceMerchantId && merged.invoiceHashKey && merged.invoiceHashIV)) throw badRequest('切換正式發票前，請填寫綠界發票的特店編號、HashKey 與 HashIV');
+  }
+  if (d.linePayEnabled) {
+    const merged = { ...(await getStudio(req.userId!)), ...d };
+    if (!(merged.linePayChannelId && merged.linePaySecret)) throw badRequest('開啟 LINE Pay 前，請填寫 Channel ID 與 Channel Secret Key');
   }
   res.json(publicStudio(await prisma.studio.update({ where: { userId: req.userId! }, data: d })));
 }

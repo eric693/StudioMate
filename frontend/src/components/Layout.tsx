@@ -6,6 +6,7 @@ import { can, isAdmin } from '../lib/permissions';
 import { setTimeZone } from '../lib/format';
 import {
   LayoutDashboard, CalendarDays, Repeat, Users, Tags, BarChart3, Settings, ShieldCheck, Dumbbell, Menu, X, Building2, ShoppingBag, Megaphone, DoorOpen,
+  Store, ScanLine, UserCog, Clock as ClockIcon,
 } from 'lucide-react';
 
 export default function Layout() {
@@ -73,13 +74,17 @@ export default function Layout() {
           {can(user, 'members') && <SidebarLink to="/orders" label="線上訂單" icon={ShoppingBag} badge={pendingOrders} />}
           {can(user, 'catalog') && <SidebarLink to="/catalog" label="方案與課程" icon={Tags} />}
           {can(user, 'marketing') && <SidebarLink to="/marketing" label="行銷" icon={Megaphone} />}
-          {can(user, 'rentals') && <SidebarLink to="/rentals" label="場地租借" icon={DoorOpen} />}
+          {can(user, 'rentals') && <SidebarLink to="/rentals" label="場地與置物櫃" icon={DoorOpen} />}
+          {can(user, 'pos') && <SidebarLink to="/pos" label="商品零售" icon={Store} />}
+          {can(user, 'access') && <SidebarLink to="/access" label="門禁入場" icon={ScanLine} />}
+          {can(user, 'staff') && <SidebarLink to="/staff" label="員工與教練" icon={UserCog} />}
           {can(user, 'reports') && <SidebarLink to="/reports" label="營收報表" icon={BarChart3} />}
           {can(user, 'settings') && <SidebarLink to="/settings" label="教室設定" icon={Settings} />}
+          <SidebarLink to="/clock" label="打卡" icon={ClockIcon} />
           <SidebarLink to="/accounts" label={isAdmin(user) ? '帳號權限' : '我的帳號'} icon={ShieldCheck} />
         </nav>
         <div className="px-3 pb-3 pb-safe flex items-center justify-between gap-2">
-          <span className="text-xs text-gray-300 pl-1">StudioMate v0.2</span>
+          <span className="text-xs text-gray-300 pl-1">StudioMate v0.3</span>
           <button onClick={handleLogout} className="text-xs text-gray-500 border border-gray-200 rounded-lg px-2.5 py-1 hover:border-red-200 hover:text-red-500 transition-colors">
             登出
           </button>

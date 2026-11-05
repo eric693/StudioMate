@@ -154,7 +154,10 @@ function SessionCard({ s, onClick, compact }: { s: Session; onClick: () => void;
   );
 }
 
-interface SessionDetail extends Omit<Session, 'booked' | 'waitlist' | 'attended'> { bookings: RosterBooking[] }
+interface SessionDetail extends Omit<Session, 'booked' | 'waitlist' | 'attended'> {
+  bookings: RosterBooking[]; originalCoach: { id: string; name: string } | null; substituteNote: string | null;
+  leaveRequests: { id: string; reason: string | null; coach: { name: string } }[];
+}
 
 function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose: () => void; onChanged: () => void; onEdit: (s: SessionDetail) => void }) {
   const [s, setS] = useState<SessionDetail | null>(null);
@@ -163,6 +166,8 @@ function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose:
   const [msg, setMsg] = useState('');
   const [capacity, setCapacity] = useState<number | ''>('');
   const [forceRefund, setForceRefund] = useState(false);
+  const [subCoaches, setSubCoaches] = useState<Coach[]>([]);
+  useEffect(() => { api.get('/coaches').then((r) => setSubCoaches(r.data.filter((c: Coach) => c.active))); }, []);
 
   const load = useCallback(() => api.get(`/sessions/${id}`).then((r) => { setS(r.data); setCapacity(r.data.capacity); }), [id]);
   useEffect(() => { load(); }, [load]);
@@ -178,6 +183,18 @@ function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose:
   }
   if (!s) return <Modal title="載入中…" onClose={onClose}><div className="text-sm text-gray-400">載入中…</div></Modal>;
 
+  async function substitute(coachId: string) {
+    if (!coachId) return;
+    const name = subCoaches.find((c) => c.id === coachId)?.name;
+    if (!confirm(`改由 ${name} 代課？已預約的會員會收到 LINE 通知。`)) return;
+    await act(() => api.post(`/sessions/${s!.id}/substitute`, { coachId }), `已改由 ${name} 授課並通知會員`);
+  }
+  async function requestLeave() {
+    const reason = prompt('請假原因（管理員核准並指定代課教練後，會通知已預約的會員）：', '');
+    if (reason === null) return;
+    await act(() => api.post('/leaves', { sessionId: s!.id, reason }), '已送出請假申請，等待管理員安排代課');
+  }
+
   const active = s.bookings.filter((b) => ['BOOKED', 'ATTENDED', 'NO_SHOW'].includes(b.status));
   const waitlist = s.bookings.filter((b) => b.status === 'WAITLIST');
   const others = s.bookings.filter((b) => ['CANCELLED', 'LATE_CANCELLED'].includes(b.status));
@@ -189,13 +206,14 @@ function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose:
     <Modal title={`${s.classType.name}・${dateTime(s.startsAt)}`} onClose={onClose} wide>
       <div className="space-y-4">
         <div className="text-sm text-gray-500 flex flex-wrap gap-x-4 gap-y-1">
-          <span>教練：{s.coach?.name ?? '未指定'}</span>
+          <span>教練：{s.coach?.name ?? '未指定'}{s.originalCoach && <span className="text-amber-600">（代課，原 {s.originalCoach.name}）</span>}</span>
           {s.room && <span>教室：{s.room}</span>}
           <span>正取 {seated}/{s.capacity}{waitlist.length ? `・候補 ${waitlist.length}` : ''}</span>
           {s.classType.creditCost !== 1 && <span>每堂扣 {s.classType.creditCost} 堂</span>}
           {s.branch && <span>分店：{s.branch.name}</span>}
           {s.liveUrl && <a href={s.liveUrl} target="_blank" rel="noreferrer" className="text-sky-600 underline">直播連結</a>}
           {s.note && <span>備註：{s.note}</span>}
+          {s.leaveRequests?.length > 0 && <span className="text-amber-600">{s.leaveRequests[0].coach.name} 已申請請假{s.leaveRequests[0].reason ? `（${s.leaveRequests[0].reason}）` : ''}，到「員工與教練 → 請假審核」安排代課</span>}
           {!cancelled && (
             <span className="ml-auto flex gap-1">
               <button className="btn-secondary text-xs py-1 flex items-center gap-1" onClick={() => onEdit(s)}><Pencil className="w-3.5 h-3.5" />編輯</button>
@@ -207,6 +225,15 @@ function SessionPanel({ id, onClose, onChanged, onEdit }: { id: string; onClose:
           )}
         </div>
         {cancelled && <div className="text-sm bg-gray-50 text-gray-500 rounded-xl p-3">這堂課已取消{s.cancelReason ? `：${s.cancelReason}` : ''}</div>}
+        {!cancelled && !ended && s.coach && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <select className="input w-auto text-xs py-1" value="" onChange={(e) => substitute(e.target.value)} aria-label="代課教練">
+              <option value="">換教練（代課）…</option>
+              {subCoaches.filter((c) => c.id !== s.coach?.id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {!s.leaveRequests?.length && <button className="text-gray-500 hover:text-brand underline" onClick={requestLeave}>教練請假</button>}
+          </div>
+        )}
         {msg && <div className="text-sm bg-green-50 text-green-700 rounded-xl px-3 py-2">{msg}</div>}
 
         {!cancelled && !ended && (

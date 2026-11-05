@@ -1,0 +1,283 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><link rel="icon" href="/icon.svg">
+<title>StudioMate 教室管家</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: single reading column; feature groups in a 2-col grid; gap table full width with its own scroll */
+:root {
+  --bg: #f5f7f6;
+  --surface: #ffffff;
+  --fg: #17211d;
+  --muted: #5b6863;
+  --line: #d9e1dd;
+  --accent: #23735a;
+  --accent-soft: #e2f0ea;
+  --ok: #23735a;
+  --part: #a86a0c;
+  --part-soft: #fbf0dc;
+  --miss: #b23a3a;
+  --miss-soft: #f8e3e3;
+  --f-display: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --f-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111816; --surface: #18211e; --fg: #e6ece9; --muted: #9aa8a2; --line: #2b3733;
+  --accent: #5cc39d; --accent-soft: #1d3329; --ok: #5cc39d; --part: #e0a548; --part-soft: #382c16;
+  --miss: #ec8080; --miss-soft: #3a1f1f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111816; --surface: #18211e; --fg: #e6ece9; --muted: #9aa8a2; --line: #2b3733;
+  --accent: #5cc39d; --accent-soft: #1d3329; --ok: #5cc39d; --part: #e0a548; --part-soft: #382c16;
+  --miss: #ec8080; --miss-soft: #3a1f1f; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 16px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 920px; margin: 0 auto; padding-block: 48px 72px; display: flex; flex-direction: column; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.3; }
+h1 { font-size: clamp(2rem, 5vw, 2.9rem); font-weight: 900; letter-spacing: .01em; }
+h2 { font-size: 1.5rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 65ch; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+section { display: flex; flex-direction: column; gap: 18px; }
+.lead { font-size: 1.12rem; color: var(--muted); }
+header { display: flex; flex-direction: column; gap: 16px; }
+.url { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; font-family: var(--f-mono); font-size: .95rem; }
+.url a { background: var(--accent-soft); padding: 6px 12px; border-radius: 6px; text-decoration: none; font-weight: 500; word-break: break-all; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.facts div { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.facts b { font-size: .8rem; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
+.groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 36px; }
+@media (max-width: 680px) { .groups { grid-template-columns: 1fr; } }
+.group { display: flex; flex-direction: column; gap: 8px; border-top: 2px solid var(--fg); padding-top: 12px; }
+.group ul { margin: 0; padding-left: 1.1em; color: var(--fg); }
+.group li { margin-block: 2px; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+.verdict strong { color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .88rem; color: var(--muted); }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: .93rem; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-size: .8rem; color: var(--muted); font-weight: 500; letter-spacing: .04em; background: var(--bg); }
+tbody tr.cat td { background: var(--bg); font-weight: 700; font-size: .85rem; padding-block: 7px; }
+td:nth-child(1) { width: 26%; font-weight: 500; }
+td:nth-child(2) { width: 14%; white-space: nowrap; }
+td:nth-child(3) { width: 22%; color: var(--muted); }
+.pill { display: inline-block; font-size: .8rem; font-weight: 700; padding: 1px 9px; border-radius: 999px; }
+.ok { color: var(--ok); background: var(--accent-soft); }
+.part { color: var(--part); background: var(--part-soft); }
+.miss { color: var(--miss); background: var(--miss-soft); }
+ol.gaps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px; counter-reset: g; }
+ol.gaps li { counter-increment: g; display: grid; grid-template-columns: 2.2em minmax(0, 1fr); gap: 4px 10px; }
+ol.gaps li::before { content: counter(g); font-family: var(--f-mono); font-weight: 500; color: var(--accent); font-size: 1.1rem; }
+ol.gaps li > div { display: flex; flex-direction: column; gap: 2px; }
+.tier { font-family: var(--f-mono); font-size: .75rem; letter-spacing: .1em; color: var(--muted); margin-top: 8px; }
+.note { font-size: .88rem; color: var(--muted); }
+.sources { font-size: .88rem; color: var(--muted); }
+.sources ul { margin: 0; padding-left: 1.1em; }
+.sources a { word-break: break-all; }
+</style>
+<style>body{margin:0}</style></head><body>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">系統介紹 · 第三版 · 2026 年 11 月</span>
+  <h1>StudioMate 教室管家</h1>
+  <p class="lead">給健身房、瑜珈、舞蹈、拳擊教室用的課程預約與會員管理系統。從排課、約課、扣堂、LINE 提醒、線上售卡和電子發票，到退費、門禁、零售、員工排班，一套全包。</p>
+  <div class="url">網址 <a href="https://studiomate.crownai.ink" target="_blank" rel="noopener">https://studiomate.crownai.ink</a></div>
+  <div class="facts">
+    <div><b>後台</b>網頁版，櫃檯與管理者使用</div>
+    <div><b>會員端</b>手機網頁 /m，可從 LINE 直接登入</div>
+    <div><b>金流與發票</b>綠界信用卡、B2C 電子發票</div>
+    <div><b>多據點</b>多分店、多教室，資料各自隔離</div>
+  </div>
+</header>
+
+<section>
+  <span class="eyebrow">功能總覽</span>
+  <h2>系統做得到的事</h2>
+  <div class="groups">
+    <div class="group">
+      <h3>排課與預約</h3>
+      <ul>
+        <li>固定課表自動排課，也能臨時加開或取消整堂課（取消會自動退堂並通知會員）</li>
+        <li>線上預約，額滿時排候補，有人取消就自動遞補</li>
+        <li>可設取消截止時間，晚取消照樣扣堂</li>
+        <li>私人課依教練每週可約時段預約</li>
+        <li>場地租借，會自動避開已經排課的時段</li>
+        <li>直播課連結、行事曆訂閱（iCal）</li>
+        <li>會員端可安裝到手機主畫面，提醒可同時推送到手機</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>方案與會籍</h3>
+      <ul>
+        <li>堂數卡、期限卡（可設每日上限）、單堂課</li>
+        <li>可限定方案只能上哪些課程類型</li>
+        <li>凍結延期、補堂、作廢</li>
+        <li>體驗方案限首次購買</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>點名與現場</h3>
+      <ul>
+        <li>手動點名，或下課後自動記為出席</li>
+        <li>QR code 自助簽到</li>
+        <li>未到次數達上限時，暫停該會員的線上預約</li>
+        <li>會員條款線上同意，條款改版後須重新同意</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>收款與發票</h3>
+      <ul>
+        <li>綠界信用卡付款（可分期、可每月自動扣款），或 LINE Pay；付款成功後自動開通方案</li>
+        <li>銀行轉帳：會員回報帳號後五碼，櫃檯審核</li>
+        <li>售卡時自動開立電子發票，方案作廢時發票一併作廢</li>
+        <li>支援手機條碼、自然人憑證、捐贈、統編</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>LINE 與行銷</h3>
+      <ul>
+        <li>LINE 自動提醒：上課前、方案快到期、堂數不足、候補遞補成功、停課</li>
+        <li>依條件篩選名單（例如很久沒來上課的會員），群發 LINE 訊息</li>
+        <li>折價券、轉介紹獎勵與介紹人排行</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>退費、轉讓與合約</h3>
+      <ul>
+        <li>退費自動試算應退金額，處理發票作廢或折讓</li>
+        <li>會籍轉讓給其他會員，可收手續費</li>
+        <li>預收款履約保障資訊與尚未履約金額報表</li>
+        <li>電子合約，線上或櫃檯手寫簽名</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>門禁、置物櫃與體測</h3>
+      <ul>
+        <li>會員動態入場 QR code，櫃檯掃碼或閘門自動判斷</li>
+        <li>入場時自動簽到當天預約的課</li>
+        <li>置物櫃出租、續租與到期提醒</li>
+        <li>體組成量測紀錄，會員手機看得到變化</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>零售與員工</h3>
+      <ul>
+        <li>商品收銀、庫存、進貨與盤點，開立電子發票</li>
+        <li>員工班表、上下班打卡、出勤工時</li>
+        <li>教練請假與代課，自動通知會員</li>
+        <li>階梯式教練抽成</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>自動行銷與分析</h3>
+      <ul>
+        <li>生日祝福、久未到訪喚回，可附折價券</li>
+        <li>公告推播、滿意度問卷與下課評價</li>
+        <li>續約率、流失、熱門時段、課程與教練排行</li>
+        <li>營收含商品、置物櫃、場地並扣除退費</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h3>營運管理</h3>
+      <ul>
+        <li>今日課表、快到期名單、堂數不足名單、近 30 天出席率</li>
+        <li>營收報表，可依月份、方案、付款方式查看</li>
+        <li>教練薪資＝鐘點費＋人數加給＋業績抽成</li>
+        <li>員工帳號，可依功能模組設定權限</li>
+        <li>會員資料可用 CSV 匯入（先預覽再寫入）；會員、銷售、上課紀錄、薪資都能匯出</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">產業對照</span>
+  <h2>跟台灣現有系統比，對齊到哪裡</h2>
+  <div class="verdict">
+    <p>比較對象是台灣常見的 5 套健身／場館管理系統：17FIT、BookFast、Fitbutler 健身管、MoHot、璿恩。</p>
+    <p><strong>結論：主流功能已全部具備。</strong>第三版補上了退費與轉讓、預收款履約保障、定期定額、分期、LINE Pay、電子合約、階梯抽成、請假代課、員工班表與打卡、門禁、置物櫃、體組成、商品零售、營運分析、自動行銷、公告與問卷。和同業相比，LINE 提醒不另外收費（BookFast 的 LINE 推播要加購），教練薪資算法也比較完整。</p>
+    <p>還有兩項只做到一部分：街口支付沒有串接、InBody 數據要手動輸入。會員端是可以安裝到手機主畫面的 Web App，有推播通知，但沒有上架 App Store。另外有兩項需要教室自己對外完成：信託或履約保證要跟銀行簽約，閘門硬體要請設備廠商串接系統提供的 API。</p>
+  </div>
+  <div class="legend">
+    <span><span class="pill ok">已具備</span></span>
+    <span><span class="pill part">部分</span> 有類似功能，但還不完整</span>
+    <span><span class="pill miss">缺少</span></span>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>功能</th><th>StudioMate</th><th>同業普及度</th><th>說明</th></tr></thead>
+      <tbody>
+        <tr class="cat"><td colspan="4">會籍與方案</td></tr>
+        <tr><td>期限卡、堂數卡、私人課、團課排程</td><td><span class="pill ok">已具備</span></td><td>5 套都有</td><td>另外支援每日上課上限、限定課程類型</td></tr>
+        <tr><td>會籍暫停（凍結）</td><td><span class="pill ok">已具備</span></td><td>多數有</td><td>凍結期間會自動延長到期日</td></tr>
+        <tr><td>會籍轉讓</td><td><span class="pill ok">已具備</span></td><td>MoHot 完整支援，其他部分支援</td><td>剩餘堂數或期限移給其他會員，到期日不變，可收轉讓手續費</td></tr>
+        <tr><td>退費計算</td><td><span class="pill ok">已具備</span></td><td>MoHot 完整支援，其他部分支援</td><td>依已上堂數或已過天數試算、扣手續費；全額退作廢發票、部分退開折讓單；LINE Pay 訂單直接線上退款</td></tr>
+        <tr class="cat"><td colspan="4">約課與 LINE</td></tr>
+        <tr><td>線上自助約課、候補、取消罰則</td><td><span class="pill ok">已具備</span></td><td>5 套都有</td><td>包含晚取消扣堂、未到停權</td></tr>
+        <tr><td>LINE 官方帳號約課</td><td><span class="pill ok">已具備</span></td><td>BookFast、MoHot 有；17FIT 要加購</td><td>可從 LINE 直接登入會員端，LINE 推播不另收費</td></tr>
+        <tr><td>教練可約時段</td><td><span class="pill ok">已具備</span></td><td>多數有</td><td>私人課依教練每週時段開放預約</td></tr>
+        <tr><td>手機 App</td><td><span class="pill ok">已具備</span></td><td>BookFast、Fitbutler 有品牌 App</td><td>可安裝到手機主畫面（PWA），全螢幕開啟、斷線提示、手機推播通知；沒有上架 App Store</td></tr>
+        <tr class="cat"><td colspan="4">教練與員工</td></tr>
+        <tr><td>鐘點費與薪資結算</td><td><span class="pill ok">已具備</span></td><td>17FIT、璿恩標配</td><td>鐘點費＋人數加給</td></tr>
+        <tr><td>業績抽成</td><td><span class="pill ok">已具備</span></td><td>MoHot、璿恩標配</td><td>固定比例或階梯式抽成（月產值達門檻後套用較高 %）</td></tr>
+        <tr><td>代課</td><td><span class="pill ok">已具備</span></td><td>常見需求</td><td>教練線上請假，管理員核准並指定代課教練後，自動通知已預約的會員</td></tr>
+        <tr><td>員工班表與打卡</td><td><span class="pill ok">已具備</span></td><td>各家多為部分支援</td><td>週班表（可複製上週）、上下班打卡、月出勤工時與補登</td></tr>
+        <tr class="cat"><td colspan="4">門禁與硬體</td></tr>
+        <tr><td>門禁閘門、感應入場</td><td><span class="pill ok">已具備</span></td><td>BookFast、MoHot、璿恩有；其他要加購</td><td>會員動態入場 QR code（每 30 秒更新）、櫃檯掃碼、閘門裝置 API、過期或凍結自動拒絕；閘門硬體需由設備廠商串接</td></tr>
+        <tr><td>場地時段預約</td><td><span class="pill ok">已具備</span></td><td>BookFast、璿恩有</td><td>會自動避開已排課時段</td></tr>
+        <tr><td>體組成（InBody）與運動歷程</td><td><span class="pill part">部分</span></td><td>Fitbutler 有，17FIT、璿恩部分支援</td><td>可手動輸入量測數據、自動算 BMI，會員手機看得到變化；還不能從 InBody 機器直接匯入</td></tr>
+        <tr><td>置物櫃管理</td><td><span class="pill ok">已具備</span></td><td>5 套官網都沒寫</td><td>櫃位一覽、出租、續租、到期提醒</td></tr>
+        <tr class="cat"><td colspan="4">金流與法規</td></tr>
+        <tr><td>電子發票</td><td><span class="pill ok">已具備</span></td><td>5 套都有</td><td>綠界 B2C，支援各種載具與統編</td></tr>
+        <tr><td>線上刷卡</td><td><span class="pill ok">已具備</span></td><td>5 套都有</td><td>綠界，付款成功後自動開通</td></tr>
+        <tr><td>定期定額（月費自動扣款）</td><td><span class="pill ok">已具備</span></td><td>5 套都有</td><td>綠界信用卡定期定額，每期扣款成功自動續約，失敗用 LINE 通知；會員可自行停止</td></tr>
+        <tr><td>LINE Pay、街口等行動支付</td><td><span class="pill part">部分</span></td><td>BookFast 有</td><td>LINE Pay 已可線上付款與退款；街口支付還沒有串接</td></tr>
+        <tr><td>分期付款</td><td><span class="pill ok">已具備</span></td><td>MoHot 部分支援</td><td>綠界信用卡分期，可設定期數與最低金額</td></tr>
+        <tr><td>預收款履約保證、信託</td><td><span class="pill ok">已具備</span></td><td>BookFast、Fitbutler、璿恩有</td><td>可設定合作銀行與保障方式（顯示在購買頁與合約），報表列出尚未履約的預收款；信託或履約保證本身需由教室與銀行簽約</td></tr>
+        <tr><td>電子合約與簽名</td><td><span class="pill ok">已具備</span></td><td>常見需求</td><td>合約範本自動帶入會員與方案資料，線上購買或櫃檯手寫簽名，內容與簽名存檔</td></tr>
+        <tr class="cat"><td colspan="4">會員經營與報表</td></tr>
+        <tr><td>到期、續約提醒</td><td><span class="pill ok">已具備</span></td><td>多數有</td><td>LINE 自動提醒，後台也有快到期名單</td></tr>
+        <tr><td>多分店、員工權限</td><td><span class="pill ok">已具備</span></td><td>多數有</td><td>權限可依功能模組設定</td></tr>
+        <tr><td>營收分析</td><td><span class="pill ok">已具備</span></td><td>多數有</td><td>可依月份、方案、付款方式查看</td></tr>
+        <tr><td>留存率、流失分析、熱門時段</td><td><span class="pill ok">已具備</span></td><td>BookFast、Fitbutler、MoHot 有</td><td>續約率、每月流失、熱門時段熱度圖、課程與教練排行、流失風險名單</td></tr>
+        <tr><td>生日優惠、久未到訪自動喚回</td><td><span class="pill ok">已具備</span></td><td>常見需求</td><td>每天自動發送 LINE，可附會員專屬折價券</td></tr>
+        <tr><td>商品零售、POS、庫存</td><td><span class="pill ok">已具備</span></td><td>BookFast 報表有零售商品</td><td>櫃檯收銀、進貨與盤點、庫存異動紀錄、多品項電子發票、作廢回補庫存</td></tr>
+        <tr><td>公告推播、滿意度問卷</td><td><span class="pill ok">已具備</span></td><td>常見需求</td><td>公告顯示在會員首頁並可推播 LINE；問卷與下課問卷，可依教練看評分</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">同業資料取自 SoftPick 依各家官網整理的比較表。官網沒寫的功能，不代表該系統一定沒有；細節請以廠商說明為準。</p>
+</section>
+
+<section>
+  <span class="eyebrow">上線前準備</span>
+  <h2>要開始用新功能，教室需要準備的事</h2>
+  <ol class="gaps">
+    <li><div><span class="tier">金流</span><h3>向綠界申請定期定額與分期</h3><p>這兩項要先在綠界開通，再到「教室設定 → 線上購買與發票」填入分期期數，並在方案勾選「定期定額」。</p></div></li>
+    <li><div><h3>申請 LINE Pay 商店</h3><p>取得 Channel ID 與 Channel Secret Key，填到「教室設定 → 線上購買與發票 → LINE Pay」。</p></div></li>
+    <li><div><span class="tier">法規</span><h3>與銀行簽訂信託或履約保證</h3><p>簽約後到「教室設定 → 退費與履約保障」填寫銀行與方式。報表裡的「預收款」就是向銀行申報額度時要用的金額。</p></div></li>
+    <li><div><h3>確認退費手續費與合約內容</h3><p>預設合約只是範本。請依教室實際規定修改退費、轉讓條款，手續費比例也要跟會員條款一致，必要時請法律專業人士審閱。</p></div></li>
+    <li><div><span class="tier">現場</span><h3>櫃檯掃碼器與閘門</h3><p>USB 掃碼器接上櫃檯電腦就能用。要接閘門或電子鎖，請到「門禁入場 → 閘門裝置」新增裝置，把網址與金鑰交給設備廠商。</p></div></li>
+    <li><div><h3>設定員工帳號對應的教練</h3><p>在「帳號權限」把教練的帳號對應到教練資料，教練就能在課表替自己的課請假。</p></div></li>
+  </ol>
+</section>
+
+<section class="sources">
+  <span class="eyebrow">資料來源</span>
+  <ul>
+    <li><a href="https://softpick.com.tw/guide/gym-management-system-guide" target="_blank" rel="noopener">SoftPick：健身房管理系統怎麼選，5 套健身房系統比較</a></li>
+    <li><a href="https://imary.com.tw/%E5%81%A5%E8%BA%AB%E6%88%BF%E7%AE%A1%E7%90%86%E7%B3%BB%E7%B5%B1%E5%BF%85%E5%82%9910%E5%A4%A7%E5%8A%9F%E8%83%BD-2026%EF%BD%9C%E5%B0%8E%E5%85%A5%E5%89%8D%E5%BF%85%E7%9C%8B%E5%AE%8C%E6%95%B4%E6%B8%85/" target="_blank" rel="noopener">艾美力科技：健身房管理系統必備 10 大功能 2026</a></li>
+    <li><a href="https://bookfast.gitbook.io/bookfast-xi-tong-jiao-xue/ying-yun-gong-neng/piao-quan-yu-fang-an/jian-li-zi-zhu-xun-lian-jin-chu-chang-hui-ji" target="_blank" rel="noopener">BookFast 教學：建立自主訓練、進出場會籍</a></li>
+    <li><a href="https://intercom.help/bookfast/zh-TW/articles/11825372-line-通知" target="_blank" rel="noopener">BookFast 說明中心：LINE 通知</a></li>
+  </ul>
+</section>
+
+</div>
+</body></html>

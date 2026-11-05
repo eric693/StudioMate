@@ -8,23 +8,27 @@ import SearchBox from '../components/SearchBox';
 import { Member, Membership } from '../types';
 import { INVOICE_STATUS, PASS_STATUS, PAY_METHOD, PLAN_KIND, addDays, dateStr, dateTime, downloadCsv, localDay, money } from '../lib/format';
 import { SellForm } from './MemberDetail';
+import { Deferred, Insights, Refunds } from './ReportsExtra';
 
 type Sale = Membership & { member: { id: string; name: string; phone: string }; bookingCount: number };
 
-interface Report { months: { month: string; revenue: number; count: number }[]; plans: { planName: string; revenue: number; count: number }[]; methods: Record<string, number> }
+interface Report { months: { month: string; revenue: number; count: number; products: number; lockers: number; rentals: number; refunds: number; net: number }[]; plans: { planName: string; revenue: number; count: number }[]; methods: Record<string, number> }
 
 export default function Reports() {
-  const [tab, setTab] = useState<'chart' | 'sales' | 'coach'>('chart');
+  const [tab, setTab] = useState<'chart' | 'sales' | 'coach' | 'insights' | 'deferred' | 'refunds'>('chart');
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {([['chart', '營收統計'], ['sales', '銷售紀錄'], ['coach', '教練薪資']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit max-w-full overflow-x-auto">
+        {([['chart', '營收統計'], ['sales', '銷售紀錄'], ['coach', '教練薪資'], ['insights', '營運分析'], ['deferred', '預收款'], ['refunds', '退費紀錄']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm whitespace-nowrap ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
         ))}
       </div>
       {tab === 'chart' && <Revenue />}
       {tab === 'sales' && <Sales />}
       {tab === 'coach' && <CoachPay />}
+      {tab === 'insights' && <Insights />}
+      {tab === 'deferred' && <Deferred />}
+      {tab === 'refunds' && <Refunds />}
     </div>
   );
 }
@@ -33,14 +37,14 @@ function Revenue() {
   const [r, setR] = useState<Report | null>(null);
   useEffect(() => { api.get('/reports/revenue').then((x) => setR(x.data)); }, []);
   if (!r) return <div className="text-gray-400 text-sm">載入中…</div>;
-  const total = r.months.reduce((s, m) => s + m.revenue, 0);
-  const max = Math.max(1, ...r.months.map((m) => m.revenue));
+  const total = r.months.reduce((s, m) => s + m.net, 0);
+  const max = Math.max(1, ...r.months.map((m) => m.revenue + m.products + m.lockers + m.rentals));
   const methodTotal = Math.max(1, Object.values(r.methods).reduce((a, b) => a + b, 0));
 
   return (
     <div className="space-y-4">
       <div className="page-header">
-        <div><h1 className="text-xl font-bold text-gray-800">營收報表</h1><p className="text-sm text-gray-400">近 12 個月合計 {money(total)}</p></div>
+        <div><h1 className="text-xl font-bold text-gray-800">營收報表</h1><p className="text-sm text-gray-400">近 12 個月淨營收 {money(total)}（方案＋商品＋置物櫃＋場地租借－退費）</p></div>
       </div>
       <HowTo module="reports" />
       <div className="card">
@@ -49,17 +53,28 @@ function Revenue() {
           {r.months.map((m) => (
             <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full min-w-0 group">
               <div className="text-[10px] text-gray-500 mb-1 opacity-0 group-hover:opacity-100 whitespace-nowrap">{m.revenue ? `${Math.round(m.revenue / 1000)}k` : ''}</div>
-              <div className="w-full rounded-t-md bg-brand/80 group-hover:bg-brand" style={{ height: `${(m.revenue / max) * 100}%`, minHeight: m.revenue ? 2 : 0 }} title={`${m.month}：${money(m.revenue)}（${m.count} 筆）`} />
+              <div className="w-full flex flex-col justify-end" style={{ height: `${((m.revenue + m.products + m.lockers + m.rentals) / max) * 100}%` }} title={`${m.month}：方案 ${money(m.revenue)}、其他 ${money(m.products + m.lockers + m.rentals)}、退費 ${money(m.refunds)}`}>
+                {m.products + m.lockers + m.rentals > 0 && <div className="w-full rounded-t-md bg-amber-400/80" style={{ flex: m.products + m.lockers + m.rentals }} />}
+                {m.revenue > 0 && <div className={`w-full bg-brand/80 group-hover:bg-brand ${m.products + m.lockers + m.rentals ? '' : 'rounded-t-md'}`} style={{ flex: m.revenue, minHeight: 2 }} />}
+              </div>
               <div className="text-[10px] text-gray-400 mt-1">{+m.month.slice(5)}月</div>
             </div>
           ))}
         </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 text-left"><th className="py-1 font-normal">月份</th><th className="font-normal text-right">筆數</th><th className="font-normal text-right">營收</th></tr></thead>
-            <tbody className="divide-y divide-gray-50">
-              {[...r.months].reverse().filter((m) => m.count).map((m) => (
-                <tr key={m.month}><td className="py-1.5 text-gray-600">{m.month}</td><td className="text-right text-gray-500">{m.count}</td><td className="text-right text-gray-800">{money(m.revenue)}</td></tr>
+            <thead><tr className="text-xs text-gray-400 text-left"><th className="py-1 font-normal">月份</th><th className="font-normal text-right">方案（筆）</th><th className="font-normal text-right">商品</th><th className="font-normal text-right">置物櫃</th><th className="font-normal text-right">場地</th><th className="font-normal text-right">退費</th><th className="font-normal text-right">淨營收</th></tr></thead>
+            <tbody className="divide-y divide-gray-50 tabular-nums">
+              {[...r.months].reverse().filter((m) => m.count || m.products || m.lockers || m.rentals || m.refunds).map((m) => (
+                <tr key={m.month}>
+                  <td className="py-1.5 text-gray-600">{m.month}</td>
+                  <td className="text-right text-gray-700 whitespace-nowrap">{money(m.revenue)}<span className="text-xs text-gray-400">（{m.count}）</span></td>
+                  <td className="text-right text-gray-600">{m.products ? money(m.products) : '—'}</td>
+                  <td className="text-right text-gray-600">{m.lockers ? money(m.lockers) : '—'}</td>
+                  <td className="text-right text-gray-600">{m.rentals ? money(m.rentals) : '—'}</td>
+                  <td className="text-right text-red-500">{m.refunds ? `-${money(m.refunds)}` : '—'}</td>
+                  <td className="text-right text-gray-800 font-medium">{money(m.net)}</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -225,7 +240,7 @@ function EditSale({ x, onClose, onSaved }: { x: Sale; onClose: () => void; onSav
 
 interface CoachRow {
   coachId: string; coachName: string; classes: number; heads: number; fillRate: number | null; value: number; pay: number;
-  rule: { payPerClass: number; payPerHead: number; headThreshold: number; revenueShare: number };
+  rule: { payPerClass: number; payPerHead: number; headThreshold: number; revenueShare: number; tiers?: { min: number; rate: number }[]; appliedRate?: number };
   detail: { sessionId: string; startsAt: string; className: string; heads: number; capacity: number; value: number; pay: number }[];
 }
 
@@ -262,7 +277,7 @@ function CoachPay() {
                 </button>
                 {open === c.coachId && (
                   <div className="px-4 pb-3 pl-11">
-                    <p className="text-xs text-gray-400 mb-2">規則：每堂 {c.rule.payPerClass}{c.rule.payPerHead ? `、超過 ${c.rule.headThreshold} 人每人 +${c.rule.payPerHead}` : ''}{c.rule.revenueShare ? `、產值抽成 ${c.rule.revenueShare}%` : ''}（到「方案與課程 → 教練」修改）</p>
+                    <p className="text-xs text-gray-400 mb-2">規則：每堂 {c.rule.payPerClass}{c.rule.payPerHead ? `、超過 ${c.rule.headThreshold} 人每人 +${c.rule.payPerHead}` : ''}{c.rule.tiers?.length ? `、階梯抽成（${c.rule.tiers.map((t) => `${t.min.toLocaleString()} 起 ${t.rate}%`).join('／')}），本月套用 ${c.rule.appliedRate}%` : c.rule.revenueShare ? `、產值抽成 ${c.rule.revenueShare}%` : ''}（到「方案與課程 → 教練」修改）</p>
                     <table className="w-full text-xs">
                       <thead><tr className="text-gray-400 text-left"><th className="font-normal py-1">時間</th><th className="font-normal">課程</th><th className="font-normal text-right">出席</th><th className="font-normal text-right">產值</th><th className="font-normal text-right">薪資</th></tr></thead>
                       <tbody className="divide-y divide-gray-50">

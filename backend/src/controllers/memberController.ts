@@ -187,7 +187,7 @@ export async function unfreeze(req: AuthRequest, res: Response) {
 export async function listMemberships(req: AuthRequest, res: Response) {
   const f = z.object({
     q: z.string().trim().optional(),
-    status: z.enum(['ACTIVE', 'FROZEN', 'EXPIRED', 'CANCELLED']).optional(),
+    status: z.enum(['ACTIVE', 'FROZEN', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'TRANSFERRED']).optional(),
     kind: z.enum(['PACK', 'PERIOD', 'DROPIN']).optional(),
     payMethod: z.enum(['CASH', 'TRANSFER', 'CARD', 'LINEPAY', 'OTHER']).optional(),
     from: day.optional(),

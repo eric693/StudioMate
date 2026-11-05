@@ -6,22 +6,25 @@ import Modal, { Field } from '../components/Modal';
 import SearchBox, { matches } from '../components/SearchBox';
 import { Branch, Member, Rental, Room } from '../types';
 import { PAY_METHOD, addDays, dateTime, hm, localDay, money } from '../lib/format';
+import Lockers from './Lockers';
 
 export default function Rentals() {
-  const [tab, setTab] = useState<'bookings' | 'rooms'>('bookings');
+  const [tab, setTab] = useState<'bookings' | 'rooms' | 'lockers'>('bookings');
   const [rooms, setRooms] = useState<Room[]>([]);
   const loadRooms = () => api.get('/rooms').then((r) => setRooms(r.data));
   useEffect(() => { loadRooms(); }, []);
   return (
     <div className="space-y-4">
-      <div className="page-header"><div><h1 className="text-xl font-bold text-gray-800">場地租借</h1><p className="text-sm text-gray-400">教室空檔出租給外部老師或團體</p></div></div>
+      <div className="page-header"><div><h1 className="text-xl font-bold text-gray-800">場地與置物櫃</h1><p className="text-sm text-gray-400">教室空檔出租給外部老師或團體、會員置物櫃租用</p></div></div>
       <HowTo module="rentals" />
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {([['bookings', '租借紀錄'], ['rooms', `場地（${rooms.length}）`]] as const).map(([k, l]) => (
+        {([['bookings', '租借紀錄'], ['rooms', `場地（${rooms.length}）`], ['lockers', '置物櫃']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
         ))}
       </div>
-      {tab === 'bookings' ? <Bookings rooms={rooms} /> : <Rooms rooms={rooms} onChanged={loadRooms} />}
+      {tab === 'bookings' && <Bookings rooms={rooms} />}
+      {tab === 'rooms' && <Rooms rooms={rooms} onChanged={loadRooms} />}
+      {tab === 'lockers' && <Lockers />}
     </div>
   );
 }

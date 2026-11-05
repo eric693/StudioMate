@@ -36,7 +36,7 @@ export const money = (n: number) => `NT$ ${n.toLocaleString('zh-TW')}`;
 export const dateStr = (s: string | null | undefined) => (s ? s.slice(0, 10) : '');
 
 export const PLAN_KIND: Record<string, string> = { PACK: '堂數卡', PERIOD: '期限卡', DROPIN: '單堂' };
-export const PASS_STATUS: Record<string, string> = { ACTIVE: '使用中', FROZEN: '凍結中', EXPIRED: '已到期', CANCELLED: '已作廢' };
+export const PASS_STATUS: Record<string, string> = { ACTIVE: '使用中', FROZEN: '凍結中', EXPIRED: '已到期', CANCELLED: '已作廢', REFUNDED: '已退費', TRANSFERRED: '已轉讓' };
 export const BOOKING_STATUS: Record<string, { label: string; cls: string }> = {
   BOOKED: { label: '已預約', cls: 'bg-blue-50 text-blue-600' },
   WAITLIST: { label: '候補', cls: 'bg-amber-50 text-amber-600' },
@@ -73,3 +73,14 @@ export async function downloadCsv(api: { get: (url: string, cfg: object) => Prom
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+
+export const ORDER_METHOD: Record<string, string> = { ONLINE: '線上刷卡', TRANSFER: '銀行轉帳', LINEPAY: 'LINE Pay' };
+export const SUB_STATUS: Record<string, { label: string; cls: string }> = {
+  ACTIVE: { label: '扣款中', cls: 'bg-green-50 text-green-600' },
+  PAST_DUE: { label: '扣款失敗', cls: 'bg-red-50 text-red-500' },
+  CANCELLED: { label: '已停止', cls: 'bg-gray-100 text-gray-400' },
+  ENDED: { label: '期數已滿', cls: 'bg-gray-100 text-gray-500' },
+};
+export const TRUST_TYPE: Record<string, string> = { TRUST: '信託', GUARANTEE: '銀行履約保證' };
+/** 「1.5 小時」 */
+export const hours = (n: number) => `${Math.round(n * 10) / 10} 小時`;

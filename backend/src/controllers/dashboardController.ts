@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import { addDays, dateOnly, localDate, localToUtc } from '../utils/time';
 import { getStudio } from '../services/studioService';
 import { DELETED } from './scheduleController';
+import { revenueBreakdown } from './engageController';
 
 export async function getDashboard(req: AuthRequest, res: Response) {
   const userId = req.userId!;
@@ -90,8 +91,13 @@ export async function getRevenueReport(req: AuthRequest, res: Response) {
     byPlan[s.planName].revenue += s.price; byPlan[s.planName].count++;
     byMethod[s.payMethod] = (byMethod[s.payMethod] ?? 0) + s.price;
   }
+  // 其他收入（商品、置物櫃、場地租借）與退費，合計為淨營收
+  const extra = await revenueBreakdown(userId);
   res.json({
-    months: Object.values(byMonth),
+    months: Object.values(byMonth).map((x) => {
+      const e = extra[x.month] ?? { products: 0, lockers: 0, rentals: 0, refunds: 0 };
+      return { ...x, ...e, net: x.revenue + e.products + e.lockers + e.rentals - e.refunds };
+    }),
     plans: Object.values(byPlan).sort((a, b) => b.revenue - a.revenue),
     methods: byMethod,
   });

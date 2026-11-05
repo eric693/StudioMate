@@ -4,6 +4,7 @@ import * as line from '@line/bot-sdk';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../app';
 import { config } from '../config';
+import { pushEnabled, pushToMember, splitMessage } from './pushService';
 
 let client: line.messagingApi.MessagingApiClient | null = null;
 function getClient() {
@@ -13,13 +14,17 @@ function getClient() {
 }
 
 export type NotifyKind = 'CLASS' | 'EXPIRY' | 'LOW_CREDIT' | 'PROMOTED' | 'SESSION_CANCELLED'
-  | 'REFERRAL' | 'ORDER_PAID' | 'ORDER_REJECTED' | 'CAMPAIGN' | 'PRIVATE_BOOKED';
+  | 'REFERRAL' | 'ORDER_PAID' | 'ORDER_REJECTED' | 'CAMPAIGN' | 'PRIVATE_BOOKED'
+  | 'REFUND' | 'TRANSFER' | 'SUBSCRIPTION' | 'SUBSTITUTE' | 'BIRTHDAY' | 'WINBACK' | 'LOCKER_EXPIRY' | 'ANNOUNCEMENT' | 'SURVEY';
 
 /** 通知會員。回傳 'sent' | 'sandbox' | 'skipped'（未綁定 LINE 或已通知過）| 'failed' */
 export async function notifyMember(userId: string, memberId: string, kind: NotifyKind, refId: string, text: string) {
-  const member = await prisma.member.findFirst({ where: { id: memberId, userId }, select: { lineUserId: true } });
+  const member = await prisma.member.findFirst({ where: { id: memberId, userId }, select: { lineUserId: true, _count: { select: { pushSubs: true } } } });
+  if (!member) return 'skipped' as const;
   const cl = getClient();
-  if (cl && !member?.lineUserId) return 'skipped' as const; // 正式模式下，沒綁定 LINE 的會員收不到
+  const hasPush = pushEnabled() && member._count.pushSubs > 0;
+  // 正式模式下，沒綁定 LINE、也沒開手機通知的會員收不到
+  if (cl && !member.lineUserId && !hasPush) return 'skipped' as const;
   let logId: string;
   try {
     const log = await prisma.reminderLog.create({ data: { userId, memberId, kind, refId, channel: cl ? 'LINE' : 'SANDBOX', message: text } });
@@ -28,12 +33,24 @@ export async function notifyMember(userId: string, memberId: string, kind: Notif
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return 'skipped' as const;
     throw e;
   }
-  if (!cl) return 'sandbox' as const;
+  // 手機推播與 LINE 並行；推播失敗不影響 LINE
+  let pushed = 0;
+  if (hasPush) {
+    const { title, body } = splitMessage(text, '會員通知');
+    pushed = await pushToMember(memberId, title, body).catch(() => 0);
+  }
+  if (!cl) return pushed ? 'sent' as const : 'sandbox' as const;
+  if (!member.lineUserId) {
+    if (pushed) return 'sent' as const;
+    await prisma.reminderLog.delete({ where: { id: logId } }).catch(() => {});
+    return 'failed' as const;
+  }
   try {
-    await cl.pushMessage({ to: member!.lineUserId!, messages: [{ type: 'text', text }] });
+    await cl.pushMessage({ to: member.lineUserId, messages: [{ type: 'text', text }] });
     return 'sent' as const;
   } catch (err) {
     console.error('LINE push error:', err);
+    if (pushed) return 'sent' as const;
     await prisma.reminderLog.delete({ where: { id: logId } }).catch(() => {});
     return 'failed' as const;
   }

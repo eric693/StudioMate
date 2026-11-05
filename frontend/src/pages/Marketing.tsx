@@ -7,23 +7,27 @@ import Modal, { Field } from '../components/Modal';
 import SearchBox from '../components/SearchBox';
 import { Coupon, Plan } from '../types';
 import { dateStr, dateTime, money } from '../lib/format';
+import { Announcements, Automations, Surveys } from './Engage';
 
-type Tab = 'coupons' | 'campaigns' | 'referrals';
+type Tab = 'coupons' | 'campaigns' | 'referrals' | 'automations' | 'announcements' | 'surveys';
 
 export default function Marketing() {
   const [tab, setTab] = useState<Tab>('coupons');
   return (
     <div className="space-y-4">
-      <div className="page-header"><div><h1 className="text-xl font-bold text-gray-800">行銷</h1><p className="text-sm text-gray-400">折價券、群發訊息與轉介紹</p></div></div>
+      <div className="page-header"><div><h1 className="text-xl font-bold text-gray-800">行銷</h1><p className="text-sm text-gray-400">折價券、群發訊息、轉介紹、自動行銷、公告與問卷</p></div></div>
       <HowTo module="marketing" />
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {([['coupons', '折價券'], ['campaigns', '群發訊息'], ['referrals', '轉介紹']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit max-w-full overflow-x-auto">
+        {([['coupons', '折價券'], ['campaigns', '群發訊息'], ['referrals', '轉介紹'], ['automations', '自動行銷'], ['announcements', '公告'], ['surveys', '問卷']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm whitespace-nowrap ${tab === k ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500'}`}>{l}</button>
         ))}
       </div>
       {tab === 'coupons' && <Coupons />}
       {tab === 'campaigns' && <Campaigns />}
       {tab === 'referrals' && <Referrals />}
+      {tab === 'automations' && <Automations />}
+      {tab === 'announcements' && <Announcements />}
+      {tab === 'surveys' && <Surveys />}
     </div>
   );
 }

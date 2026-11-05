@@ -8,14 +8,14 @@ import SearchBox, { matches } from '../components/SearchBox';
 import { Branch, Studio } from '../types';
 import { dateTime, setTimeZone } from '../lib/format';
 
-type Tab = 'rules' | 'commerce' | 'terms' | 'branches' | 'logs';
+type Tab = 'rules' | 'commerce' | 'refund' | 'terms' | 'contract' | 'branches' | 'logs';
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('rules');
   const [s, setS] = useState<Studio | null>(null);
   useEffect(() => { api.get('/studio').then((r) => setS(r.data)); }, []);
   if (!s) return <div className="text-gray-400 text-sm">載入中…</div>;
-  const TABS: [Tab, string][] = [['rules', '基本與規則'], ['commerce', '線上購買與發票'], ['terms', '會員條款'], ['branches', '分店'], ['logs', '通知紀錄']];
+  const TABS: [Tab, string][] = [['rules', '基本與規則'], ['commerce', '線上購買與發票'], ['refund', '退費與履約保障'], ['terms', '會員條款'], ['contract', '電子合約'], ['branches', '分店'], ['logs', '通知紀錄']];
   return (
     <div className="space-y-4">
       <div className="page-header"><div><h1 className="text-xl font-bold text-gray-800">教室設定</h1></div></div>
@@ -25,6 +25,8 @@ export default function Settings() {
       </div>
       {tab === 'rules' && <SettingsForm s={s} onSaved={setS} section="rules" />}
       {tab === 'commerce' && <SettingsForm s={s} onSaved={setS} section="commerce" />}
+      {tab === 'refund' && <SettingsForm s={s} onSaved={setS} section="refund" />}
+      {tab === 'contract' && <Contract s={s} onSaved={setS} />}
       {tab === 'terms' && <Terms s={s} onSaved={setS} />}
       {tab === 'branches' && <Branches />}
       {tab === 'logs' && <Logs />}
@@ -34,13 +36,15 @@ export default function Settings() {
 
 const RULE_KEYS = ['name', 'phone', 'address', 'timezone', 'bookingWindowDays', 'cancelDeadlineHours', 'lateCancelForfeit', 'waitlistEnabled', 'autoAttend',
   'remindBeforeHours', 'expiryRemindDays', 'lowCreditThreshold', 'noShowLimit', 'noShowWindowDays', 'noShowSuspendDays', 'lateCancelCountsAsNoShow',
-  'selfCheckIn', 'checkInBeforeMin'] as const;
-const COMMERCE_KEYS = ['onlinePayEnabled', 'transferEnabled', 'bankInfo', 'ecpayMode', 'ecpayMerchantId', 'invoiceEnabled', 'invoiceMode', 'invoiceMerchantId', 'referralRewardAmount'] as const;
-const NULLABLE = ['phone', 'address', 'bankInfo', 'ecpayMerchantId', 'invoiceMerchantId'];
+  'selfCheckIn', 'checkInBeforeMin', 'accessAutoCheckIn'] as const;
+const COMMERCE_KEYS = ['onlinePayEnabled', 'transferEnabled', 'bankInfo', 'ecpayMode', 'ecpayMerchantId', 'invoiceEnabled', 'invoiceMode', 'invoiceMerchantId', 'referralRewardAmount',
+  'installments', 'installmentMin', 'linePayEnabled', 'linePayMode', 'linePayChannelId'] as const;
+const REFUND_KEYS = ['refundFeePercent', 'transferFee', 'trustType', 'trustBank', 'trustNote'] as const;
+const NULLABLE = ['phone', 'address', 'bankInfo', 'ecpayMerchantId', 'invoiceMerchantId', 'installments', 'linePayChannelId', 'trustType', 'trustBank', 'trustNote'];
 
-function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s: Studio) => void; section: 'rules' | 'commerce' }) {
+function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s: Studio) => void; section: 'rules' | 'commerce' | 'refund' }) {
   const [s, setS] = useState(initial);
-  const [secrets, setSecrets] = useState({ ecpayHashKey: '', ecpayHashIV: '', invoiceHashKey: '', invoiceHashIV: '' });
+  const [secrets, setSecrets] = useState({ ecpayHashKey: '', ecpayHashIV: '', invoiceHashKey: '', invoiceHashIV: '', linePaySecret: '' });
   const [saved, setSaved] = useState(false);
   const set = <K extends keyof Studio>(k: K, v: Studio[K]) => { setS({ ...s, [k]: v }); setSaved(false); };
   const num = (k: keyof Studio, min = 0, max = 999) => ({
@@ -49,13 +53,13 @@ function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s
   });
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    const keys: readonly string[] = section === 'rules' ? RULE_KEYS : COMMERCE_KEYS;
+    const keys: readonly string[] = section === 'rules' ? RULE_KEYS : section === 'refund' ? REFUND_KEYS : COMMERCE_KEYS;
     const body: Record<string, unknown> = Object.fromEntries(keys.map((k) => [k, NULLABLE.includes(k) ? ((s as unknown as Record<string, unknown>)[k] || null) : (s as unknown as Record<string, unknown>)[k]]));
     if (section === 'commerce') Object.assign(body, Object.fromEntries(Object.entries(secrets).filter(([, v]) => v)));
     const r = await api.put('/studio', body);
     setTimeZone(r.data.timezone);
     setS(r.data); onSaved(r.data);
-    setSecrets({ ecpayHashKey: '', ecpayHashIV: '', invoiceHashKey: '', invoiceHashIV: '' });
+    setSecrets({ ecpayHashKey: '', ecpayHashIV: '', invoiceHashKey: '', invoiceHashIV: '', linePaySecret: '' });
     setSaved(true);
   }
   const toggle = (k: keyof Studio, label: string, hint?: string) => (
@@ -113,6 +117,7 @@ function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s
           </div>
           {toggle('selfCheckIn', '開放會員掃 QR code 簽到', '把 QR code 放在櫃檯平板或印出來，會員用手機掃描即完成點名')}
           <Field label="開課前幾分鐘開放簽到"><input {...num('checkInBeforeMin', 0, 180)} /></Field>
+          {toggle('accessAutoCheckIn', '門禁入場時自動簽到', '會員在「門禁入場」掃入場碼時，若有即將開始的預約課，一併記為出席')}
         </div>
         <div className="card space-y-3">
           <h2 className="font-semibold text-gray-700">LINE 提醒</h2>
@@ -122,6 +127,26 @@ function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s
             <Field label="到期前（天）" hint="0＝不提醒"><input {...num('expiryRemindDays', 0, 60)} /></Field>
             <Field label="剩幾堂時提醒" hint="0＝不提醒"><input {...num('lowCreditThreshold', 0, 50)} /></Field>
           </div>
+        </div>
+      </> : section === 'refund' ? <>
+        <div className="card space-y-3">
+          <h2 className="font-semibold text-gray-700">退費與轉讓</h2>
+          <p className="text-xs text-gray-400">退費試算＝售價 × 未使用比例（堂數卡看剩餘堂數、期限卡看剩餘天數），再扣下面的手續費。實退金額在辦理時仍可調整。手續費比例請與會員條款、合約內容一致。</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="退費手續費（剩餘金額的 %）"><input {...num('refundFeePercent', 0, 100)} /></Field>
+            <Field label="轉讓手續費（元）"><input {...num('transferFee', 0, 100000)} /></Field>
+          </div>
+        </div>
+        <div className="card space-y-3">
+          <h2 className="font-semibold text-gray-700">預收款履約保障</h2>
+          <p className="text-xs text-gray-400">先收款後提供服務的方案（堂數卡、期限卡）屬於預收款。與銀行簽訂信託或履約保證後填在這裡，會顯示在會員購買頁與合約上；「營收報表 → 預收款」可查目前尚未履約的金額。</p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="保障方式"><select className="input" value={s.trustType ?? ''} onChange={(e) => set('trustType', (e.target.value || null) as Studio['trustType'])}>
+              <option value="">未提供</option><option value="TRUST">信託</option><option value="GUARANTEE">銀行履約保證</option>
+            </select></Field>
+            <Field label="合作銀行"><input className="input" value={s.trustBank ?? ''} onChange={(e) => set('trustBank', e.target.value)} placeholder="例如：○○商業銀行" /></Field>
+          </div>
+          <Field label="說明（選填）"><input className="input" value={s.trustNote ?? ''} onChange={(e) => set('trustNote', e.target.value)} placeholder="例如：保證額度新台幣 100 萬元，期間至 2027/12/31" /></Field>
         </div>
       </> : <>
         <div className="card space-y-3">
@@ -136,6 +161,23 @@ function SettingsForm({ s: initial, onSaved, section }: { s: Studio; onSaved: (s
             {secret('ecpayHashIV', 'HashIV', s.ecpayHashIVSet)}
           </div>
           {s.ecpayMode === 'stage' && <p className="text-xs text-gray-400">測試環境使用綠界公開的測試帳號，可用測試卡號 4311-9522-2222-2222（任意未過期日期、安全碼 222）體驗完整流程。</p>}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="信用卡分期期數" hint="例如 3,6,12；留空＝不開放分期（需先向綠界申請分期服務）"><input className="input font-mono" value={s.installments ?? ''} onChange={(e) => set('installments', e.target.value)} placeholder="3,6,12" /></Field>
+            <Field label="最低分期金額"><input {...num('installmentMin', 0, 10_000_000)} /></Field>
+          </div>
+          <p className="text-xs text-gray-400">方案勾選「定期定額」後，會員可以選擇每月自動扣款（綠界信用卡定期定額），每期扣款成功自動續一張方案，扣款失敗會用 LINE 通知會員。</p>
+        </div>
+        <div className="card space-y-3">
+          <h2 className="font-semibold text-gray-700">LINE Pay</h2>
+          {toggle('linePayEnabled', '開放會員用 LINE Pay 購買方案', '需先向 LINE Pay 申請商店，取得 Channel ID 與 Channel Secret Key')}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="環境"><select className="input" value={s.linePayMode} onChange={(e) => set('linePayMode', e.target.value as Studio['linePayMode'])}>
+              <option value="sandbox">測試環境（Sandbox）</option><option value="production">正式環境</option>
+            </select></Field>
+            <Field label="Channel ID"><input className="input font-mono" value={s.linePayChannelId ?? ''} onChange={(e) => set('linePayChannelId', e.target.value)} /></Field>
+            {secret('linePaySecret', 'Channel Secret Key', s.linePaySecretSet)}
+          </div>
+          <p className="text-xs text-gray-400">LINE Pay 付款的方案退費時，會直接退款到會員的 LINE Pay。</p>
         </div>
         <div className="card space-y-3">
           <h2 className="font-semibold text-gray-700">銀行轉帳</h2>
@@ -292,6 +334,36 @@ function Logs() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 電子合約：開啟後，會員線上購買前需手寫簽名；櫃檯售卡後也可在會員頁「簽約」 */
+function Contract({ s, onSaved }: { s: Studio; onSaved: (s: Studio) => void }) {
+  const [tpl, setTpl] = useState<{ defaultText: string; vars: string[] } | null>(null);
+  const [text, setText] = useState(s.contractText ?? '');
+  const [enabled, setEnabled] = useState(s.contractEnabled);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { api.get('/contracts/template').then((r) => { setTpl(r.data); if (!s.contractText) setText(r.data.defaultText); }); }, [s.contractText]);
+  async function save() {
+    const r = await api.put('/studio', { contractEnabled: enabled, contractText: text.trim() || null });
+    onSaved(r.data); setSaved(true);
+  }
+  return (
+    <div className="card space-y-3">
+      <label className="flex items-start gap-3 cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false); }} />
+        <span><span className="text-sm text-gray-700">會員線上購買前必須簽署合約</span><span className="block text-xs text-gray-400">會員在手機上閱讀合約並手寫簽名後才能付款。合約內容與簽名會存檔，之後修改範本不影響已簽的合約。</span></span>
+      </label>
+      <Field label="合約範本" hint={tpl ? `可用變數：${tpl.vars.join('、')}` : undefined}>
+        <textarea className="input font-mono text-xs leading-relaxed" rows={18} value={text} onChange={(e) => { setText(e.target.value); setSaved(false); }} />
+      </Field>
+      <p className="text-xs text-gray-400">預設範本只是起點，請依教室實際的退費、轉讓規定修改，必要時請法律專業人士審閱。</p>
+      <div className="flex items-center gap-3">
+        <button className="btn-primary" onClick={save}>儲存</button>
+        {tpl && <button className="btn-secondary" onClick={() => { setText(tpl.defaultText); setSaved(false); }}>還原預設範本</button>}
+        {saved && <span className="text-sm text-green-600">已儲存</span>}
+      </div>
     </div>
   );
 }

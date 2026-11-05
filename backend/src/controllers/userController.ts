@@ -4,10 +4,11 @@ import bcrypt from 'bcryptjs';
 import { AuthRequest } from '../middleware/auth';
 import { prisma } from '../app';
 import { MODULES, sanitizePermissions } from '../middleware/permissions';
+import { badRequest } from '../utils/http';
 import { normalizeAccount } from './authController';
 
 const userSelect = {
-  id: true, email: true, name: true, role: true, permissions: true, active: true, lastLoginAt: true, createdAt: true,
+  id: true, email: true, name: true, role: true, permissions: true, active: true, lastLoginAt: true, createdAt: true, coachId: true,
 } as const;
 
 async function accountTaken(account: string, exceptId?: string) {
@@ -26,6 +27,15 @@ export async function listUsers(req: AuthRequest, res: Response) {
     prisma.user.findMany({ where: { ownerId: req.authUserId! }, select: userSelect, orderBy: { createdAt: 'asc' } }),
   ]);
   res.json({ self, staff });
+}
+
+/** 員工對應的教練（教練帳號只能替自己的課請假）；空字串或 null＝不對應 */
+async function coachRef(ownerId: string, coachId: unknown): Promise<string | null | undefined> {
+  if (coachId === undefined) return undefined;
+  if (!coachId) return null;
+  const c = await prisma.coach.findFirst({ where: { id: String(coachId), userId: ownerId } });
+  if (!c) throw badRequest('找不到教練');
+  return c.id;
 }
 
 export async function createUser(req: AuthRequest, res: Response) {
@@ -47,6 +57,7 @@ export async function createUser(req: AuthRequest, res: Response) {
       role: 'STAFF',
       ownerId: req.authUserId!,
       permissions: sanitizePermissions(permissions),
+      coachId: (await coachRef(req.authUserId!, req.body.coachId)) ?? null,
     },
     select: userSelect,
   });
@@ -74,6 +85,7 @@ export async function updateUser(req: AuthRequest, res: Response) {
       permissions: permissions !== undefined ? sanitizePermissions(permissions) : undefined,
       active: typeof active === 'boolean' ? active : undefined,
       password: password ? await bcrypt.hash(String(password), 10) : undefined,
+      coachId: await coachRef(req.authUserId!, req.body.coachId),
     },
     select: userSelect,
   });
